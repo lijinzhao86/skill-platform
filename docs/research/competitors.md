@@ -1,8 +1,8 @@
 # skill-platform 竞品分析
 
 > 调研日期：2026-09-20 · 数据来自公开报道与官方文档，标注了时点
-> 用途：为 [`product-blueprint.md`](product-blueprint.md) 的**定位与差异化**提供论据底稿
-> 结论先行：**业内四层里，分发、计价、信任三层都有人做；门控层是空的。那是 skill-platform 唯一的位置。**
+> 用途：为 [`blueprint.md`](../target/blueprint.md) 的**定位与差异化**提供论据底稿
+> 结论先行：**业内四层里，分发、计价、信任三层都有人做；「分层」门控是空的**（整包级门控存在——Agensi 就是；按内容层级分档的没有）。那是 skill-platform 唯一的位置。
 
 ---
 
@@ -19,7 +19,7 @@
 
 **关键洞察在于 ③ 与 ② 的耦合**：如果内容一旦分发就全量落到用户手里（所有现有 Hub 的默认假设），那么无论计价层设计得多精细，收费都拦不住绕过。反过来，**要做分层计价，前置条件是分层分发**。
 
-这就是为什么门控层是空的——不是没人想到，是**它要求推翻现有 Hub 的基础假设「装上就是你的」**。
+这就是为什么**分层**门控是空的——不是没人想到，是**它要求推翻现有 Hub 的基础假设「装上就是你的」**。
 
 ---
 
@@ -46,15 +46,14 @@ SKILL.md 是共同格式，但分发入口分属三个阵营。**不认清这一
 | 项 | 内容 |
 |---|---|
 | 定位 | OpenClaw 的公共技能注册表与市场，自称 **"npm for AI agents"** |
-| 上线 | **2026-02-07** 正式上线（clawhub.ai，GitHub: openclaw/clawhub） |
+| 上线 | 与 OpenClaw 同期（**2025 末 – 2026 初**）。所引来源只写"与 OpenClaw 同期创建"，**没有给出具体日期**（clawhub.ai，GitHub: openclaw/clawhub） |
 | 所有权 | OpenClaw 开源社区 / OpenClaw Foundation |
-| 技能格式 | SKILL.md + 辅助文件；**每个 skill 是基于 MCP 标准的 plugin** |
-| 规模 | 2025-11：127 个 → 2026-03：15,000+；2026-02-28 记 13,729；2026-05 仍记 13,729；另有来源称约 2 万（数据随时点波动，以下不引用单一数字） |
-| 发现 | 向量语义搜索（OpenAI `text-embedding-3-small`，1536 维，Convex 向量索引）+ slug 前缀匹配；11 大类目；质量评分与使用指标 |
+| 技能格式 | Markdown `SKILL.md` 目录 + 辅助文件（**不是 MCP plugin**——所引来源没有任何"MCP 打包"的描述） |
+| 规模 | 2025-11：127 个 → 2026-03：15,000+；另有来源称约 2 万。**时点数字互相矛盾**：一份记录停在 2026-02-28 的 13,729，而一篇 arXiv 注册表爬取记 2026-06 约 6.5 万、2026-07 约 6.8 万。**故不引用单一数字** |
+| 发现 | 向量语义搜索 + slug 前缀匹配；11 大类目；质量评分与使用指标。（所引 wiki 只证实检索"由 embedding 驱动"，**未公布具体模型与向量库**） |
 | 安装 | `clawhub install <slug>` → 落到 `~/.openclaw/skills/` |
-| 审核 | **无正式审核**（"indexes everything without formal review"） |
+| 审核 | 开放发布、**无事前审核**；有事后举报机制，但**隐藏需管理员决定**——现行 `specs/security-moderation.md` 明确"举报不会自动改变可见性"（"Reports never change skill visibility or installability automatically"）。发布者需 GitHub 账号年龄 **≥ 14 天**。⚠️ 该 spec 的**旧版本**曾写"独立举报超过 3 个自动隐藏"，现行版本已无此规则——引用前先确认版本。（原稿引的英文 "indexes everything without formal review" 在所引来源里找不到） |
 | 附带 | 另有 SOUL.md 注册表（onlycrabs.ai）分享系统设定与角色 lore |
-| 技术栈 | TanStack Start 前端 + Convex 后端 |
 
 **四层评估**：① 有（官方，且是生态入口）② **无**（纯免费）③ **无** ④ **无**（明确不做审核，把判断推给用户）
 
@@ -134,17 +133,17 @@ SKILL.md 是共同格式，但分发入口分属三个阵营。**不认清这一
 |---|---|
 | 定位 | **"The trust and distribution layer for AI agent skills"** ——安全扫描、跨 agent、创作者变现 |
 | 计费单元 | **整包买断** |
-| 分成 | **80 / 20** |
+| 分成 | **创作者留 70%**（售卖页："Keep 70% of net revenue"、"one all-inclusive 30% platform fee"）。创始人另有说法：直销 80% 再减 $0.50/单、MCP 订阅抽 70%。**两个口径都公开发布过，别只引一个** |
 | 跨 agent | Claude Code、Cursor、Codex CLI、Gemini CLI、OpenClaw 等 **20+ 种** |
 | 差异化 | 每条 skill **全量安全扫描**；提供 **MCP server** 让 agent 原生发现（"your agent connects and suggests relevant skills mid-conversation"） |
-| 常见价位 | **$3–5** |
+| 常见价位 | 一次性 **$19 / $29 / $49 / $99**；订阅 **$19–49/月**（据其售卖页）。原稿的 $3–5 只在二手来源里出现 |
 | 起点动机 | "800,000+ skills scattered across GitHub — no curation, no security, and no way for creators to earn" |
 | 团队 | 单人创始人，Lovable + Supabase |
-| 安装 | `curl -sL https://www.agensi.io/api/install/<slug> \| tar xz -C ~/.openclaw/skills/` |
+| 安装 | 付款后才放行的**带指纹 ZIP**（买家 UUID 打戳、按需生成），装到 `~/.claude/skills/` 或经 MCP 直接进 agent。原稿的 `curl … \| tar xz -C ~/.openclaw/skills/` 与实际流程不符 |
 
-**四层评估**：① 有 ② 有（整包）③ **无** ④ 有（全量安全扫描 + 精选）
+**四层评估**：① 有 ② 有（整包）③ **有**（整包级：未付费拿不到付费文件；但**没有层内分级**）④ 有（全量安全扫描 + 精选）
 
-**为什么 Agensi 是最该盯的竞品**：它是唯一在"创作者变现 + 信任"这条路上跑通早期形态的玩家，且**跨 agent**——与 skill-platform 的边界最接近。但它的计费单元是**整包买断**，正是 skill-platform 要解决的"买家在最不确定时做最大决策"的问题。**Agensi 的 $3–5 价位正好印证了 skill-platform 的判断：这类内容的价格区间低到"复制不如再买"。**
+**为什么 Agensi 是最该盯的竞品**：它是唯一在"创作者变现 + 信任"这条路上跑通早期形态的玩家，且**跨 agent**——与 skill-platform 的边界最接近。但它的计费单元是**整包买断**，正是 skill-platform 要解决的"买家在最不确定时做最大决策"的问题。**它一次性 $19–99 的价位反而放大了这个问题**：买家要在最不确定的时候先付 $29 赌一把。（原稿据 $3–5 推出"复制不如再买"——价位订正后该推论不成立，结论方向相反。）
 
 ---
 
@@ -158,6 +157,8 @@ SKILL.md 是共同格式，但分发入口分属三个阵营。**不认清这一
 | VoltAgent/awesome-openclaw-skills | 收录列表 | 49.2k stars；已进入"低频维护、持续消费" |
 | ClaudeSkills.wiki / Cursor Directory / OpenCode registry | 社区目录 | 规模较小 |
 | **SkillsMP** | 抓取型聚合 | **约 190 万个公开技能（爬自 GitHub）** |
+
+> 上表的 star / issue / PR 数与 SkillsMP 的"约 190 万"都是**未标日期的快照**，会随时间失真，引用前需重新核对。
 
 GitHub 话题规模：`agent-skills` 6,182 个仓库、`claude-skills` 3,971 个仓库。生态从 **2025-12 的一个注册表 → 2026 Q1/Q2 的八个主要市场**。
 
@@ -175,7 +176,7 @@ GitHub 话题规模：`agent-skills` 6,182 个仓库、`claude-skills` 3,971 个
 |---|---|
 | 母体 | ModelScope，2022-11 由阿里云 + CCF 推出；**5 万+ 模型、1300 万+ 开发者** |
 | Skills 中心 | Skills 汇聚专区，"开源模型与 Skills 自由组合的一站式探索" |
-| MCP 广场 | 2026-04-15 上线，**1400+ 款 MCP 服务**，支付宝、MiniMax 独家首发 |
+| MCP 广场 | 支付宝、MiniMax 独家首发。**原稿的"2026-04-15 上线"与"1400+ 款"两个数字都找不到出处** |
 | 战略意义 | **支付宝支付集成 Skill 的首发地**（2026-03-31） |
 | 内容运营 | 有 1,000+ 科研 skill（从中严选 18 个）；FlagOS Skills（异构 AI 芯片）；端侧本地 AI 文件治理 Skill 等 |
 | 第三方支付 | 拉卡拉 MOSS 支付 Skill 上架 |
@@ -255,10 +256,10 @@ GitHub 话题规模：`agent-skills` 6,182 个仓库、`claude-skills` 3,971 个
 
 | 玩家 | ① 分发 | ② 计价单元 | ③ **门控** | ④ 信任 |
 |---|---|---|---|---|
-| ClawHub | ✅ 官方入口 | ❌ 免费 | ❌ | ❌ 明确不审 |
+| ClawHub | ✅ 官方入口 | ❌ 免费 | ❌ | ⚠️ 无事前审核，有事后举报 |
 | **腾讯 SkillHub + SkillPay** | ✅ 镜像+精选+社区 | ✅ 按调用量 | ❌ | ✅ TRACE 五维 + 安全扫描 |
 | 火山引擎 ArkClaw | ✅ 复用 ClawHub | ❌ 订阅制 | ❌ | ⚠️ 依赖 ClawHub |
-| **Agensi** | ✅ 跨 20+ agent | ✅ 整包买断 | ❌ | ✅ 全量安全扫描 |
+| **Agensi** | ✅ 跨 20+ agent | ✅ 整包买断 | ✅ 整包级（无层内分级） | ✅ 全量安全扫描 |
 | 免费目录群 / SkillsMP | ⚠️ 无策展 | ❌ | ❌ | ❌ |
 | 魔搭 Skills 中心 | ✅ 依托模型社区 | ⚠️ 技能免费 | ❌ | ⚠️ 运营策展 |
 | **支付宝 AI 支付平台** | ❌ **明确不做** | ✅ 买断/次数包/积分包/时长包/订阅 | ❌ | ❌ 交给合作平台 |
@@ -267,9 +268,11 @@ GitHub 话题规模：`agent-skills` 6,182 个仓库、`claude-skills` 3,971 个
 
 ---
 
-## 五、为什么门控层是空的
+## 五、为什么**分层**门控是空的
 
-不是没人想到，是**三条结构性原因**：
+先厘清一点：**「门控」本身不是空白**——Agensi 的整包买断就是整包级门控，未付费拿不到付费文件。空的是**层内分级**：没有任何一家按内容层级分档授权。
+
+这不是没人想到，是**三条结构性原因**：
 
 **1. Hub 的基础假设与之冲突。** 所有现有 Hub 的默认心智是「装上就是你的」——技能装到 `~/.openclaw/skills/` 后就是一个本地文件夹。要做分层门控，必须推翻这个假设，改成「按需向服务端取件」。这不是加一个功能，是换一套分发架构。
 
@@ -298,7 +301,7 @@ GitHub 话题规模：`agent-skills` 6,182 个仓库、`claude-skills` 3,971 个
 
 ### 3. 跨三线是被低估的优势
 
-腾讯绑 OpenClaw、Agensi 主跨 Claude Code 系、魔搭绑自家模型社区。skill-platform 的 materializer 产出「目录树 + SKILL.md」，**天然跨线**——这是定位里应该显式声明的能力。
+腾讯绑 OpenClaw、Agensi 主跨 Claude Code 系、魔搭绑自家模型社区。skill-platform 走服务端权威 + 网关 skill + API（[ADR 0001](../decisions/0001-server-authoritative.md)），**任何能发 HTTP 请求的 agent 都能用**——跨线能力来自交付形态本身，不来自某个模块。这是定位里应该显式声明的能力。（原稿把它归因于 materializer；该模块已基本作废。）
 
 ### 4. 两个必须正面回应的竞争动作
 
@@ -325,4 +328,4 @@ GitHub 话题规模：`agent-skills` 6,182 个仓库、`claude-skills` 3,971 个
 - 生态质量数据来自 SkillsBench（分析 47,150 个技能，均分 6.2/12）。
 - 海外支付协议数据来自 Cloudflare Agents 文档、UsageBox、DEV Community 等（2026-06 前后）。
 
-**本文是论据底稿，不是结论。** 定位与价值判断以 [`product-blueprint.md`](product-blueprint.md) 为准；若本文数据与蓝图冲突，先核对时点再修蓝图。
+**本文是论据底稿，不是结论。** 定位与价值判断以 [`blueprint.md`](../target/blueprint.md) 为准；若本文数据与蓝图冲突，先核对时点再修蓝图。

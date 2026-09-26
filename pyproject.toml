@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "skill-platform"
 version = "0.1.0"
-description = "Skill management platform for AI agents — hosting, tiered licensing, progressive payment"
+description = "Hosting platform for AI-agent skills — server-side storage, remote progressive loading"
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "MIT" }

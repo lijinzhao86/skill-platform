@@ -1,14 +1,22 @@
 # skill-platform
 
-Skill management platform for AI agents. Skills are stored like a database,
-managed through a web console, and loaded progressively at runtime.
+A hosting platform for AI-agent [skills](https://agentskills.io). The design keeps
+skills on the server and exposes them over a remote API — agents search, read, and
+use them on demand, so progressive disclosure is enforced server-side and no skill
+copy is installed on the client.
+
+**Status: designed, not yet implemented.** The product and technical documents under
+[`docs/`](docs/) are the source of truth — start at [`docs/README.md`](docs/README.md).
 
 ## Layout
 
-- `skill_platform/` — core package: SQLite store, permission resolution,
-  git importer, and DB → folder materializer. Single source of truth shared
-  by the runtime gate and the console.
-- `tests/` — unit tests for the core package.
+- `skill_platform/` — pre-rewrite baseline package (SQLite store, permission
+  resolution, materializer). Its architecture predates the current design; see
+  [ADR 0001](docs/decisions/0001-server-authoritative.md), which makes the
+  materializer largely obsolete.
+- `tests/` — unit tests for the baseline package.
+- `docs/` — product and technical documentation.
+- `.github/workflows/ci.yml` — lint + tests on every PR, image build/push on `main`.
 
 ## Quick start
 

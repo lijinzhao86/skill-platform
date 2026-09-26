@@ -2,7 +2,7 @@
 
 > 日期：2026-09-26 · 对应首次提交
 > 方法：提交前独立代码审计（fresh agent，无上下文）→ 主 agent **逐条复现验证**
-> 处置：**先提交基线，暂不修复**。原因是本次发现**全部集中在本项目即将重写或废弃的模块**（见 [`technical-design.md`](technical-design.md) 第 6 章），现在修等于写即将删除的代码。逐条保留复现方式，便于重写时对照。
+> 处置：**先提交基线，暂不修复**。原因是发现**大多落在即将重写或废弃的模块**（`materializer` 已由 [ADR 0001](../../decisions/0001-server-authoritative.md) 判为基本作废，其余多集中在 `importer` / `store` / `permissions` 的旧模型上——见 [`technical-design.md`](technical-design.md) 第 6 章），现在修等于写即将删除的代码。**但不是全部**：文档与 Dockerfile 类的条目（L4、L5）与架构无关，重写不会自动消掉。逐条保留复现方式，便于重写时对照。
 
 ## 状态标注
 
@@ -11,6 +11,11 @@
 | **已复现** | 我用脚本实际跑出来过 |
 | **部分复现** | 只在特定条件下触发 |
 | **未验证** | 审计报告提出，但我没有独立复现（保留供参考） |
+| **已修复** | 已被后续改动解决（注明日期与改动） |
+
+**分布（15 条，权威口径）**：9 已复现 + **1 两半混合**（M2：符号链接已复现、`dest_root` 缺失仅部分复现）+ 1 部分复现 + 3 未验证 + 1 已修复 = 15。
+
+> 本文件是这组计数的**唯一权威来源**；`README.md` 与 `test-plan.md` 只链接，不复述。
 
 ---
 
@@ -33,7 +38,7 @@
 
 `skill_platform/materializer.py:84-93` · **已复现**
 
-`keep` 只来自被选中的 skill，而 `names` 里未知的名字在 `materialize` 的第 55 行被**静默丢弃**。于是 `keep` 为空 → prune 删掉 `dest_root` 下**每一个**含 `SKILL.md` 的顶层目录。
+`keep` 只来自被选中的 skill，而 `names` 里未知的名字在 `materialize` 的第 56 行被**静默丢弃**（第 55 行取回，第 56 行滤掉 `None`）。于是 `keep` 为空 → prune 删掉 `dest_root` 下**每一个**含 `SKILL.md` 的顶层目录。
 
 复现：先 materialize `lark` + `brief`，再 `materialize(store, dest, names=["brieff"], prune=True)`（打错一个字母）→ `removed: ['brief', 'lark']`，`dest_root` **被清空**。目录里的外来文件也一并销毁。
 
@@ -149,10 +154,10 @@
 
 先读快照、后读版本，分属两次事务。两次之间落地的权限写入会被记成"当前版本"，要等 TTL 过期才被看见。有 TTL 兜底，因此不比设计更差，但**先读版本号即可消除该窗口**。
 
-### L4 · 文档与代码不符
+### L4 · 文档与代码不符 · **已修复**（2026-09-26）
 
-- `README.md:8` 称 importer 是 "git importer"，但 `import` 接受的是本地目录，仓库里**没有任何 git 相关代码**。
-- `pyproject.toml:8` 宣传 "tiered licensing, progressive payment"，而 `technical-design.md` v0.3 明确本阶段**不含计费**。
+- 根 `README.md` 曾称 importer 是 "git importer"，并描述一个 web console——两者都**没有对应代码**（`import` 接受的是本地目录，仓库里没有任何 git 相关代码，也没有 console）。**已改写为真实的包结构与状态。**
+- `pyproject.toml` 曾宣传 "tiered licensing, progressive payment"，而 [`technical-design.md`](technical-design.md) 明确本阶段**不含计费**。**已改为 "server-side storage, remote progressive loading"。**
 
 ### L5 · Dockerfile 的 `/app` 归 root
 

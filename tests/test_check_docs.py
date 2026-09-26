@@ -1,0 +1,292 @@
+"""Tests for the docs-architecture validator.
+
+The validator lives at .claude/skills/docs-architecture/check_docs.py, outside the
+package, so it is loaded by path. Each test builds a synthetic docs/ tree; most of
+these cases come from defects found in the validator's first audit.
+"""
+
+from __future__ import annotations
+
+import importlib.util
+import sys
+from pathlib import Path
+from types import ModuleType
+
+import pytest
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
+CHECKER_PATH = REPO_ROOT / ".claude" / "skills" / "docs-architecture" / "check_docs.py"
+
+ADR_OK = "# 0001\n\n## 背景\n\n## 决定\n\n## 理由\n\n## 后果\n"
+
+GOOD_README = """# v1-x
+
+> **状态**：进行中
+
+## 目标
+见 [prd.md](prd.md)。
+## 这一版明确不做什么
+见 [prd.md](prd.md)。
+## 验收标准
+见 [prd.md](prd.md)。
+## 与目标态的关系
+见 [../../target/README.md](../../target/README.md)。
+"""
+
+GOOD_PRD = "# prd\n\n## 用户与场景\n\n## 范围\n\n## 验收与指标\n"
+GOOD_TD = "# td\n\n## 架构\n\n## 数据模型\n\n## 接口\n\n## 分期\n\n## 开放问题\n"
+GOOD_PLAN = "# plan\n\n## 验收映射\n\n## 用例\n\n## 结果\n"
+
+
+def _load_checker() -> ModuleType:
+    spec = importlib.util.spec_from_file_location("check_docs", CHECKER_PATH)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"cannot load validator from {CHECKER_PATH}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+check_docs = _load_checker()
+
+
+def build_version(root: Path, name: str = "v1-x", *, readme: str = GOOD_README,
+                  prd: str | None = GOOD_PRD, td: str | None = GOOD_TD,
+                  plan: str | None = GOOD_PLAN, make_iterations: bool = True) -> Path:
+    """Create a version folder; pass None for a document to omit it."""
+    version_dir = root / "versions" / name
+    version_dir.mkdir(parents=True)
+    (version_dir / "README.md").write_text(readme, encoding="utf-8")
+    for filename, content in (("prd.md", prd), ("technical-design.md", td), ("test-plan.md", plan)):
+        if content is not None:
+            (version_dir / filename).write_text(content, encoding="utf-8")
+    if make_iterations:
+        iterations = version_dir / "iterations"
+        iterations.mkdir()
+        (iterations / "0001-first.md").write_text("# 0001\n", encoding="utf-8")
+    return version_dir
+
+
+def build_docs(root: Path, **version_kwargs: object) -> Path:
+    """Create a minimal but complete docs/ tree, so every fixture link resolves."""
+    docs = root / "docs"
+    build_version(docs, **version_kwargs)
+    (docs / "target").mkdir(parents=True)
+    (docs / "target" / "README.md").write_text("# target\n", encoding="utf-8")
+    (docs / "decisions").mkdir()
+    (docs / "decisions" / "0001-ok.md").write_text(ADR_OK, encoding="utf-8")
+    return docs
+
+
+def test_clean_tree_passes(tmp_path: Path) -> None:
+    docs = build_docs(tmp_path)
+
+    assert check_docs.check_version(docs / "versions" / "v1-x", "v1-x") == []
+    assert check_docs.check_links(docs)[1] == []
+
+
+def test_missing_documents_are_reported(tmp_path: Path) -> None:
+    docs = tmp_path / "docs"
+    version_dir = build_version(docs, prd=None, plan=None, make_iterations=False)
+
+    problems = check_docs.check_version(version_dir, "v1-x")
+
+    assert "v1-x/prd.md 缺失" in problems
+    assert "v1-x/test-plan.md 缺失" in problems
+    assert "v1-x/iterations/ 缺失" in problems
+
+
+def test_link_with_commonmark_title_resolves(tmp_path: Path) -> None:
+    """`[x](y.md "Title")` is valid CommonMark and must not read as a dead link."""
+    docs = build_docs(tmp_path)
+    (docs / "versions" / "v1-x" / "test-plan.md").write_text(
+        GOOD_PLAN + '\n见 [技术设计](technical-design.md "设计稿")\n', encoding="utf-8"
+    )
+
+    assert check_docs.check_links(docs)[1] == []
+
+
+def test_angle_bracket_link_resolves(tmp_path: Path) -> None:
+    docs = build_docs(tmp_path)
+    (docs / "versions" / "v1-x" / "test-plan.md").write_text(
+        GOOD_PLAN + "\n[td](<technical-design.md>)\n", encoding="utf-8"
+    )
+
+    assert check_docs.check_links(docs)[1] == []
+
+
+def test_angle_bracket_link_with_title_resolves(tmp_path: Path) -> None:
+    """`[x](<y.md> "Title")` — the title comes off first, then the brackets."""
+    docs = build_docs(tmp_path)
+    (docs / "versions" / "v1-x" / "test-plan.md").write_text(
+        GOOD_PLAN + '\n[td](<technical-design.md> "设计稿")\n', encoding="utf-8"
+    )
+
+    assert check_docs.check_links(docs)[1] == []
+
+
+def test_paren_title_resolves(tmp_path: Path) -> None:
+    docs = build_docs(tmp_path)
+    (docs / "versions" / "v1-x" / "test-plan.md").write_text(
+        GOOD_PLAN + "\n[td](technical-design.md (设计稿))\n", encoding="utf-8"
+    )
+
+    assert check_docs.check_links(docs)[1] == []
+
+
+def test_link_inside_a_fence_is_ignored(tmp_path: Path) -> None:
+    """A documentation sample may link anywhere without failing the build."""
+    docs = build_docs(tmp_path)
+    (docs / "versions" / "v1-x" / "notes.md").write_text(
+        "# notes\n\n```markdown\n[example](does-not-exist.md)\n```\n", encoding="utf-8"
+    )
+
+    assert check_docs.check_links(docs)[1] == []
+
+
+def test_dead_link_is_reported(tmp_path: Path) -> None:
+    docs = build_docs(tmp_path)
+    (docs / "versions" / "v1-x" / "test-plan.md").write_text(
+        GOOD_PLAN + "\n[gone](nowhere.md)\n", encoding="utf-8"
+    )
+
+    broken = check_docs.check_links(docs)[1]
+
+    assert len(broken) == 1
+    assert "nowhere.md" in broken[0]
+
+
+def test_directory_named_like_adr_is_reported_not_crash(tmp_path: Path) -> None:
+    decisions = tmp_path / "docs" / "decisions"
+    (decisions / "0001-impostor.md").mkdir(parents=True)
+
+    problems = check_docs.check_decisions(str(decisions))
+
+    assert any("0001-impostor.md" in problem for problem in problems)
+
+
+def test_stray_directory_in_version_folder_is_reported(tmp_path: Path) -> None:
+    docs = tmp_path / "docs"
+    version_dir = build_version(docs)
+    (version_dir / "drafts").mkdir()
+
+    problems = check_docs.check_version(version_dir, "v1-x")
+
+    assert any("drafts/" in problem for problem in problems)
+
+
+def test_adr_sections_inside_a_fence_do_not_count(tmp_path: Path) -> None:
+    """An ADR documenting the format in a fenced example must still define its own sections."""
+    decisions = tmp_path / "docs" / "decisions"
+    decisions.mkdir(parents=True)
+    (decisions / "0001-fenced.md").write_text(
+        "# 0001\n\n模板长这样：\n\n```markdown\n## 背景\n## 决定\n## 理由\n## 后果\n```\n",
+        encoding="utf-8",
+    )
+
+    problems = check_docs.check_decisions(str(decisions))
+
+    assert any("## 背景" in problem for problem in problems)
+
+
+def test_heading_inside_unterminated_fence_does_not_satisfy_topic(tmp_path: Path) -> None:
+    version_dir = tmp_path / "docs" / "versions" / "v1-x"
+    version_dir.mkdir(parents=True)
+    path = version_dir / "README.md"
+    path.write_text("# v1\n\n> **状态**：x\n\n## 目标\n\n```python\n## 验收标准\n", encoding="utf-8")
+
+    missing = check_docs.check_topics(str(path), "README.md")
+
+    assert "验收" in missing
+
+
+def test_longer_fence_contains_shorter_fence(tmp_path: Path) -> None:
+    """A ```` block wrapping a ``` block must not end at the inner fence.
+
+    Distinguishes fence char tracking from fence *length* tracking: a char-only
+    implementation closes the outer fence at the inner ``` and then reads the
+    following heading as real.
+    """
+    version_dir = tmp_path / "docs" / "versions" / "v1-x"
+    version_dir.mkdir(parents=True)
+    path = version_dir / "README.md"
+    path.write_text(
+        "# v1\n\n> **状态**：x\n\n## 目标\n\n````markdown\n```\n## 验收标准\n```\n````\n",
+        encoding="utf-8",
+    )
+
+    missing = check_docs.check_topics(str(path), "README.md")
+
+    assert "验收" in missing
+
+
+def test_status_in_lead_block_satisfies_topic(tmp_path: Path) -> None:
+    docs = tmp_path / "docs"
+    version_dir = build_version(docs)
+
+    missing = check_docs.check_topics(str(version_dir / "README.md"), "README.md")
+
+    assert "状态" not in missing
+
+
+def test_non_utf8_file_does_not_crash(tmp_path: Path) -> None:
+    docs = build_docs(tmp_path)
+    (docs / "versions" / "v1-x" / "notes.md").write_bytes(b"# caf\xe9 latin-1\n")
+
+    assert check_docs.check_links(docs)[1] == []
+
+
+def test_iteration_naming(tmp_path: Path) -> None:
+    docs = tmp_path / "docs"
+    version_dir = build_version(docs)
+    (version_dir / "iterations" / "2-bad.md").write_text("# x\n", encoding="utf-8")
+
+    problems = check_docs.check_version(version_dir, "v1-x")
+
+    assert any("2-bad.md" in problem for problem in problems)
+
+
+def test_non_ascii_iteration_slug_is_allowed(tmp_path: Path) -> None:
+    docs = tmp_path / "docs"
+    version_dir = build_version(docs)
+    (version_dir / "iterations" / "0002-中文分词.md").write_text("# x\n", encoding="utf-8")
+
+    problems = check_docs.check_version(version_dir, "v1-x")
+
+    assert not any("0002" in problem for problem in problems)
+
+
+def test_end_to_end_exit_code(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    docs = build_docs(tmp_path)
+
+    monkeypatch.setattr(sys, "argv", ["check_docs.py", "--docs", str(docs)])
+
+    assert check_docs.main() == 0
+
+
+def test_end_to_end_reports_failure(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    docs = build_docs(tmp_path, td=None)
+
+    monkeypatch.setattr(sys, "argv", ["check_docs.py", "--docs", str(docs)])
+
+    assert check_docs.main() == 1
+
+
+def test_stray_file_under_versions_is_reported(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """versions/ holds version folders only — a loose file there is a violation."""
+    docs = build_docs(tmp_path)
+    (docs / "versions" / "notes.md").write_text("# stray\n", encoding="utf-8")
+
+    monkeypatch.setattr(sys, "argv", ["check_docs.py", "--docs", str(docs)])
+
+    assert check_docs.main() == 1
+
+
+def test_decisions_dir_inside_version_reported_once(tmp_path: Path) -> None:
+    docs = tmp_path / "docs"
+    version_dir = build_version(docs)
+    (version_dir / "decisions").mkdir()
+
+    problems = check_docs.check_version(version_dir, "v1-x")
+
+    assert len([p for p in problems if "decisions" in p]) == 1

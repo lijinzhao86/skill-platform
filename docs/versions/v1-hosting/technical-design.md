@@ -1,11 +1,12 @@
 # skill-platform 系统架构设计
 
-> 版本：v0.3 · 2026-09-26
+> 最后更新：2026-09-26
 > 状态：技术设计稿，尚未进入实现
+> 所属版本：[v1-hosting](README.md)——版本由文件夹承担，本文不再自带版本号
 > **定位：skill 的托管与远程加载服务。** skill 全部活在服务端；用户通过网关 skill 与 CLI 远程搜索、读取、使用 skill，**本地不留 skill 副本**。
-> **本期不含收费**：无定价、无权益、无门控、无钱包。已设计过的渐进付费方案见附录 B（推迟，非废弃）。
-> 本次修订（v0.3）：把架构从「下载到本地 + 客户端原生加载」改为「服务端权威 + 网关 skill + API」，并按此写出表结构与接口。
-> 第 1 章是核实过的调研事实，与架构选择无关，改动架构时不必重做。
+> **本版不含收费**：无定价、无权益、无门控、无钱包。已设计过的渐进付费方案见附录 B（推迟，非废弃）。
+> 上一轮修订把架构从「下载到本地 + 客户端原生加载」改为「服务端权威 + 网关 skill + API」，并按此写出表结构与接口。
+> 第 1 章是核实过的调研事实，与架构选择无关，改动架构时不必重做。**架构决策已独立成 [ADR](../../decisions/README.md)**，本文只链接、不复述理由。
 
 ---
 
@@ -15,9 +16,9 @@
 
 1. **不做「下载到本地再靠客户端原生加载」。** 本项目采用**服务端权威**：skill 的目录与文件都在服务器上，客户端通过远程地址按需读取。好处是**渐进加载天然成立**（搜索只给 L1、正文接口只给 L2、文件接口只给 L3，服务端在接口层强制），且**本地不落任何 skill 副本**。
 
-2. **唯一需要本地安装的是一个「网关 skill」+ 一个 CLI。** 网关 skill 的 frontmatter 是常驻上下文的全部成本（≈79 tokens），它的正文记录服务地址与调用协议；CLI 负责登录与持有凭据。目录**不常驻**——搜索、排序、查找全部在服务端。
+2. **唯一需要本地安装的是一个「网关 skill」+ 一个 CLI。** 网关 skill 的 frontmatter 是常驻上下文的全部成本（≈80 tokens——它是我们自己写的纯英文 skill），它的正文记录服务地址与调用协议；CLI 负责登录与持有凭据。目录**不常驻**——搜索、排序、查找全部在服务端。
 
-3. **一个网关 skill 解决了 L1 天花板。** 实测每个 skill 的 L1 平均 317 字符（≈79 tokens），500 个 skill 全量安装 = 约 4 万 tokens 常驻。网关模型下常驻的只有网关一个，**目录成本从 O(N) 降到 O(1)**。
+3. **一个网关 skill 解决了 L1 天花板。** 本机 30 个真实 SKILL.md 实测：每个 skill 的 L1 平均 318 字符，**其中约 33% 是 CJK 字符**——按 4 字符/token 折算约 80 tokens，但 CJK 接近 1 token/字符，实际**约 160 tokens**。500 个 skill 全量安装 = **约 8 万 tokens 常驻**（口径见 §1.6）。网关模型下常驻的只有网关一个，**目录成本从 O(N) 降到 O(1)**。
 
 ### 架构总览
 
@@ -49,7 +50,7 @@
                 │ 安装一个网关 skill
                 ▼
    ┌─ 网关 skill（唯一的本地产物）───────────────────────────────────────┐
-   │ frontmatter：常驻上下文（≈79 tokens），description 写得足够广        │
+   │ frontmatter：常驻上下文（≈80 tokens），description 写得足够广        │
    │ 正文：服务地址 + 调用协议（先搜索 → 看清单 → 按需读正文/文件）        │
    └──────────────────────────────────────────────────────────────────────┘
                 │ agent 依协议调用
@@ -75,7 +76,7 @@
 
 ## 第 1 章 · 调研结论（可核实的事实）
 
-本章只写有出处的事实，推断单独标注。所有结论都在 2026-09-26 核实过。
+本章只写有出处的事实，推断单独标注。**每条结论都给了出处**，核实到 2026-09-26；个别客户端细节的把握程度见 §1.7 的信心说明——**不要把这一章读成"每条都验证到底"**。
 
 ### 1.1 Agent Skills 是真实的开放标准
 
@@ -94,12 +95,12 @@
 | `allowed-tools` | 否 | 空格分隔的预批准工具（实验性） |
 
 - 三层渐进加载（规范原文的分层与 token 指引）：
-  1. **Metadata**（~100 tokens）：`name` + `description`，启动时为**所有** skill 加载
+  1. **Metadata**（~50–100 tokens）：`name` + `description`，启动时为**所有** skill 加载
   2. **Instructions**（建议 <5000 tokens）：SKILL.md 正文，skill 被激活时加载
   3. **Resources**（按需）：`scripts/` `references/` `assets/` 里的文件，仅在正文引用到时加载
 
 - **`.agents/skills/` 是跨客户端约定**（`~/.agents/skills/` 与 `<project>/.agents/skills/`），实现指南明确列出该路径用于跨客户端互操作。
-- 客户端实现指南给了**两种激活模式**：文件读取激活，与**专用工具激活**（如 `activate_skill`）。后者被明确推荐，列出的优势包括：控制返回内容、用结构化标签包裹、列出附属资源、执行权限控制或请求用户同意、记录激活用于分析。
+- 客户端实现指南给了**两种激活模式**：文件读取激活，与**专用工具激活**（如 `activate_skill`）。指南说专用工具在"模型无法直接读文件"时是**必需**的、在能读时"可选但有用"，并明确"两种做法在实践中都可行"——**它没有把哪一种排在前面**。专用工具的好处包括：控制返回内容、用结构化标签包裹、列出附属资源、执行权限控制或请求用户同意、记录激活用于分析。
 - 实现指南明确云端/沙箱 agent 的处境：没有本地文件系统时，"需要一个替代的发现机制——一个 API、一个远程 registry，或者内置资源"。**这正是本项目的立足点。**
 - 过滤器规则：被排除的 skill 必须整个从目录里隐藏，而不是列出来再在激活时拦截。
 
@@ -109,7 +110,7 @@
 
 出处：[code.claude.com/docs/en/skills](https://code.claude.com/docs/en/skills)、[plugins/host-marketplace](https://code.claude.com/docs/en/plugins/host-marketplace)、[mcp](https://code.claude.com/docs/en/mcp)、[issue #11054](https://github.com/anthropics/claude-code/issues/11054)。
 
-**加载位置**（五个来源）：企业托管目录、`~/.claude/skills/`、`<project>/.claude/skills/`、plugin 内的 `skills/`、claude.ai 同步的 `~/.claude/skills/synced/`。
+**加载位置**（至少这五个）：企业托管目录、`~/.claude/skills/`、`<project>/.claude/skills/`、plugin 内的 `skills/`、claude.ai 同步的 `~/.claude/skills/synced/`。官方表还列了嵌套的 `<subdir>/.claude/skills/` 与 `--add-dir` 指定的目录，共七行。
 
 **三层的实际成本**：
 - frontmatter 的 `description` + `when_to_use` 每轮常驻，**截断于 1536 字符**
@@ -160,7 +161,7 @@
 
 出处：[2026-07-28 changelog](https://modelcontextprotocol.io/specification/2026-07-28/changelog)、[authorization](https://modelcontextprotocol.io/specification/2026-07-28/basic/authorization)。
 
-**协议 churn 是实证的**：2025-06-18 → 2026-07-28 是一次**破坏性重写**——移除协议级会话与 `Mcp-Session-Id`、移除 `initialize` 握手、服务端不得再发起 JSON-RPC 请求、elicitation 改由 MRTR 承载。Roots/Sampling/Logging 进入废弃；OAuth DCR 被 CIMD 取代（仅保留兼容）。规范还引入了功能生命周期与废弃策略（最短 12 个月窗口 + 废弃登记表）。**Claude Code 侧的具体成本**：它有两个 runtime（v1 基于 TS SDK 1.x；v2 基于 SDK 2.0 才支持 2026-07-28），**每次启动自己挑一个** → 服务端必须跨修订可用。
+**协议 churn 是实证的**：**上一个修订版 2025-11-25 → 2026-07-28 是一次破坏性重写**——移除协议级会话与 `Mcp-Session-Id`、移除 `initialize` 握手、服务端不得再发起 JSON-RPC 请求、elicitation 改由 MRTR 承载。（changelog 的原话是"自上一个修订版以来"；2025-06-18 是更早的版本，不要拿它当基线。）Roots/Sampling/Logging 进入废弃；OAuth DCR 被 CIMD 取代（仅保留兼容）。规范还引入了功能生命周期与废弃策略（最短 12 个月窗口 + 废弃登记表）。**Claude Code 侧的具体成本**：它有两个 runtime（v1 基于 TS SDK 1.x；v2 基于 SDK 2.0 才支持 2026-07-28），**每次启动自己挑一个** → 服务端必须跨修订可用。
 
 **鉴权规范的关键约束**（若将来做 MCP 适配器，这些是 MUST）：
 
@@ -184,12 +185,12 @@
 
 | | 形状 | 更新检测 |
 |---|---|---|
-| **V1** | `{ skills: [{ name, description, files: string[] }] }`——逐文件，客户端逐个拉取 | **客户端自行计算**：按路径排序后对 `path` + 空格 + 字节 + 空格 逐项 sha256 |
+| **V1** | `{ skills: [{ name, description, files: string[] }] }`——逐文件，客户端逐个拉取 | **客户端自行计算**：按路径排序后对 `path` + `\0` + 字节 + `\0` 逐项 sha256。**分隔符是 NUL，不是空格**（已对本机缓存的 CLI 1.5.24 反查 `computeWellKnownSkillDigest` 确认） |
 | **V2** | `{ $schema, skills: [{ name, type: "skill-md"\|"archive", description, url, digest }] }` | 直接取 entry 的 `digest` |
 
 解析顺序：`agent-skills/index.json` → `skills/index.json`；**先按路径相对、再按根**。该 provider 刻意拒绝在带 scope 的路径没内容时回退到根索引。
 
-**这不是 Agent Skills 标准的一部分**——`agentskills.io/llms.txt` 的文档索引里**没有 discovery/publishing/hosting 章节**。它属于这个 CLI。**所以它随时可能变，要当外部依赖管理。**
+**这不是 Agent Skills 标准的一部分**——`agentskills.io/llms.txt` 的文档索引里**没有 discovery/publishing/hosting 章节**，它是这个 CLI 的私有约定。一个例外值得记：V2 索引的 `$schema` 指向 `agentskills.io` 域下的 `discovery/0.2.0` 草案，CLI 源码称其为 "the v0.2.0 draft"——所以它挂在标准轨道边上，但**仍是草案、未进标准**（该 schema URL 目前 DNS 不解析，内容无法核实）。**所以它随时可能变，要当外部依赖管理。**
 
 **飞书是这个通道的真实生产用户**（2026-09-26 本机实测）：
 
@@ -202,7 +203,7 @@
 **两个必须记住的坑**：
 
 1. **首选路径在不发布它的主机上返回 200 + HTML**（不是 404）。所以我们要发布时**两条路径都发**，且**自己未发布时必须返回真 404**。
-2. 旧版 CLI（本机 1.5.x）可能不认首选路径——legacy 不是可选项。
+2. 旧版 CLI 只认 legacy 路径——首选路径是 2026-03-23 才加进 CLI 的，**分界在 1.4.5**：实测 npm 上 **1.4.5 及以前没有**该路径，**1.4.6 起才有**。本机缓存的 1.5.12 与 1.5.24 都已认（已反查确认），所以"本机版本"不是风险来源，风险来自更老的客户端。**两条路径都发仍然是对的，但理由是兼容 1.4.5 及以前**，不是"本机版本可能不认"。
 
 飞书用的 `version`、`metadata.requires.bins`、`metadata.cliHelp` 都是**发布方扩展**，不属标准字段集（且 `metadata` 实际是嵌套的）。**我们要原样透传未知字段**，否则会丢作者的元数据。
 
@@ -210,21 +211,26 @@
 
 ### 1.6 实测数据（决定设计的数字）
 
-对本机 30 个真实 SKILL.md 的测量：
+对本机 30 个真实 SKILL.md 的测量（`~/.agents/skills/lark-*` 等 28 个，加 `~/.claude/skills/lark/` 与 `lark/feishu-bridge/`）。**每行都写明口径，以便复现**：
 
-| 指标 | 数值 |
-|---|---|
-| L1（frontmatter）平均 | **317 字符 ≈ 79 tokens** |
-| L1 / 全部内容 | **4.2%** |
-| 500 个 skill 全装时的 L1 常驻 | **≈ 39,600 tokens** |
-| L2 正文中位数 / 最大 | 4,196 字符（≈1k tokens）/ 25,782 |
-| L3 文件字节中位数 / 最大 | 29,736 / 1,570,809 |
-| 没有 L3 文件的 skill | 9 / 30（5 个有实质正文，4 个是 141 字符的指针型） |
-| `name` 与父目录名不符 | `lark/im/`（name `lark-im`）等**不符**；`~/.agents/skills/lark-*` 扁平布局**符合** |
+| 指标 | 口径 | 数值 |
+|---|---|---|
+| L1（frontmatter）平均 | `---` 之间的内容，不含分隔符 | **318 字符** |
+| 其中 CJK 字符占比 | 同上；CJK＝表意文字 + CJK 标点 + 全角 + 假名 | **32.7%**（`lark-task` 最高 58.7%） |
+| L1 tokens / skill | 4 字符/token（只对拉丁文本成立） | ≈80 |
+| L1 tokens / skill | CJK 按 ~1 token/字符折算 | **≈160** ← 本样本的正确量级 |
+| L1 / 全部内容 | L1 ÷（L1 + 正文） | **4.2%** |
+| 500 个 skill 全装时的 L1 常驻 | 按 CJK 折算 | **≈ 8 万 tokens** |
+| L2 正文 中位数 / 最大 | SKILL.md 去掉 frontmatter，字符 | 3,962 / 25,213 |
+| L3 单文件字节 中位数 / 最大 | 每个非 `SKILL.md` 文件 | 4,362 / 746,862 |
+| L3 每 skill 合计字节 中位数 / 最大 | 一个 skill 的全部非 `SKILL.md` 文件之和；**9 个无 L3 的按 0 计入** | 29,736 / 1,570,809 |
+| ↳ 同上，只算有 L3 的 21 个 skill | 剔除那 9 个 0 | 148,017 |
+| 没有 L3 文件的 skill | — | 9 / 30（4 个正文仅 **133** 字符，是指针型；另 5 个有实质正文） |
+| `name` 与父目录名不符 | — | `lark/im/`（name `lark-im`）等**不符**；`~/.agents/skills/lark-*` 扁平布局**符合** |
 
 **两条推论**：
 
-- **L1 是天花板。** 79 tokens/skill 很小，但它在"所有已安装 skill"上线性常驻。**→ 这是网关模型的直接理由**：常驻 1 个网关，而不是 N 个 skill。
+- **L1 是天花板。** 单个 skill 的 L1 看着很小（本机样本约 160 tokens），但它在"所有已安装 skill"上线性常驻——500 个就是 8 万。**→ 这是网关模型的直接理由**：常驻 1 个网关，而不是 N 个 skill。
 - **命名合规不是形式问题。** 标准要求 `name` 等于父目录名。服务端托管时这个约束作用在**导出/打包**上；内部存储用 `relpath`，不受影响。
 
 ### 1.7 MCP 鉴权的客户端支持现状（决定「CLI 是普适客户端」）
@@ -254,7 +260,7 @@
 
 **一个实现上的坑：CIMD 支持很薄。** 已确认发布 CIMD 的只有 Claude Code、VS Code、ChatGPT；Cursor / Gemini CLI / Codex 未确认（Gemini CLI 文档压根没提，明确说走 DCR）；且 2025-12 时 Auth0、Okta、Cognito、Entra、Google Identity **都还没实现 CIMD**。→ **我们的 AS 必须同时支持 CIMD + DCR + 预注册三种注册方式**，否则会卡死一批客户端。
 
-**信心说明**：本节部分依赖社区维护的矩阵与文档镜像（Codex 官方文档抓取 403）；有一份 `kicad-mcp-pro` 兼容矩阵已被明确标为过时不可信。**「覆盖广」这个结论稳，「每个客户端细节」按需再核。**
+**信心说明**：本节部分依赖社区维护的矩阵与文档镜像（Codex 官方文档与部分厂商文档抓取 403，只能靠二手）。**「交互式覆盖广、M2M 无人支持」这两个结论稳；「每个客户端的具体细节」按需再核。**
 
 ---
 
@@ -292,7 +298,7 @@
 ```
 用户提问
    ↓
-网关 skill 的 description 命中（常驻上下文，≈79 tokens）
+网关 skill 的 description 命中（常驻上下文，≈80 tokens）
    ↓
 agent 读网关正文（L2，本地）→ 知道服务地址与调用协议
    ↓
@@ -519,7 +525,7 @@ CREATE TABLE skill_stat (
 );
 ```
 
-**只索引 L1**（`name` + `title` + `description`），**绝不索引正文或文件**。这既是性能考虑，也是安全约束：正文一旦进全文索引，就可能通过片段检索被反推出来。
+**只索引 L1**（标准的 `name` + `description`，外加平台自己的 `title` 元数据字段），**绝不索引正文或文件**。这既是性能考虑，也是安全约束：正文一旦进全文索引，就可能通过片段检索被反推出来。
 
 **排序公式（P0，必须可解释）**：
 
@@ -544,7 +550,7 @@ CREATE TABLE audit_event (
 CREATE INDEX idx_audit_at ON audit_event(at DESC);
 ```
 
-skill 会被下载执行，事后追溯是底线。**发布、删除、回滚、令牌签发与撤销一律留痕。**
+skill 的内容会被客户端取走、在客户端环境里使用，事后追溯是底线。**发布、删除、回滚、令牌签发与撤销一律留痕。**
 
 ---
 
@@ -761,7 +767,7 @@ metadata:
 - **鉴权用一把静态令牌先行**（AS 放 P1），把链路跑通
 - CLI：`setup` / `search` / `show` / `get`
 - 网关 skill 发布到 well-known 索引（V2 + V1 两条路径）
-- **验收**：在一个干净环境里 `setup` 装上网关，然后在 agent 里问一个需要某 skill 的任务，agent 能自己搜到、读到正文、按需取文件并完成任务——**且全程没有任何 skill 内容落到本地**
+- **验收**：在一个干净环境里 `setup` 装上网关，然后在 agent 里问一个需要某 skill 的任务，agent 能自己搜到、读到正文、按需取文件并完成任务——**且全程没有任何 skill 内容被当作副本落到本地**（`get` 落到临时目录是 agent 的中间产物，不算，见 §4.6）
 
 ### P1 · 自建登录与令牌
 
@@ -796,23 +802,25 @@ metadata:
 
 ---
 
-## 附录 A · 已锁定的架构决策
+## 附录 A · 架构决策
 
-| # | 决策 | 理由 |
+本设计里的**决策不写在这里**，而是独立成编号 ADR —— 决策跨版本存活，不该随设计文档一起被重写。
+
+完整索引见 [`decisions/README.md`](../../decisions/README.md)。与本版相关的九条：
+
+| ADR | 决策 | 本文对应章节 |
 |---|---|---|
-| A1 | **服务端权威，本地不落 skill 副本** | 渐进加载在接口层强制；你的定位要求 |
-| A2 | **一个通用网关 skill + 自研 CLI** | 常驻成本从 O(N) 降到 O(1)；CLI 持有凭据 |
-| A3 | **API 是主契约，MCP 是可选适配器** | API 可控、无协议 churn、且 console/CLI/CI 本就需要；MCP 协议一年内破坏性重写过一次 |
-| A4 | **接口形状对齐 MCP Skills 扩展** | 将来加适配器是薄封装，不是重写 |
-| A5 | **`id` 是不透明主键，`name` 是属性** | 改名不影响任何引用；`(namespace_id, name)` 只作唯一约束 |
-| A6 | **个人命名空间自动创建** | `(namespace_id, name)` 一个约束同时覆盖个人与团队，且升级不需迁移 |
-| A7 | **内容寻址 + `UNIQUE(skill_id, digest)`** | 幂等发布、去重、可追溯 |
-| A8 | **搜索排序全在服务端，且只索引 L1** | 目录不常驻，服务端就是索引；索引正文有反推风险 |
-| A9 | **自建 OAuth 2.1 AS，支持 CIMD + DCR + 预注册** | CIMD 客户端支持很薄，只做一种会卡死一批 |
-| A10 | **CLI 是普适客户端** | 无人值守场景今天只有自研客户端能覆盖 |
-| A11 | **P0 不做脚本执行** | 服务端执行需要沙箱（独立课题）；返回给客户端执行会破坏"不落盘" |
-| A12 | **well-known 通道只发布网关 skill** | 该通道无认证无门控，只适合公开的单一入口 |
-| A13 | **连纯 API 也照 MCP 的错误形状（401 + WWW-Authenticate + PRM）** | 将来加适配器不用改语义 |
+| [0001](../../decisions/0001-server-authoritative.md) | 服务端权威，本地不落 skill 副本 | 第 0、2 章 |
+| [0002](../../decisions/0002-gateway-skill-and-cli.md) | 交付形态：一个通用网关 skill + 自研 CLI | 第 5 章 |
+| [0003](../../decisions/0003-api-primary.md) | API 为主契约，MCP 为可选适配器 | 第 4 章 |
+| [0004](../../decisions/0004-opaque-id-primary-key.md) | 身份模型：不透明 `id` 作主键，`name` 为属性 | 3.2、3.3 |
+| [0005](../../decisions/0005-content-addressing.md) | 内容寻址与幂等发布 | 3.3 |
+| [0006](../../decisions/0006-search-server-side.md) | 检索在服务端，且只索引 L1 | 3.4、4.2 |
+| [0007](../../decisions/0007-self-built-oauth-as.md) | 自建 OAuth 2.1 AS，支持三种客户端注册方式 | 3.1、4.4、4.6 |
+| [0008](../../decisions/0008-no-script-execution.md) | P0 不做脚本执行 | 第 7 章 |
+| [0009](../../decisions/0009-drop-l2n.md) | 砍掉 `l2#n`，付费边界只落在层与层之间 | 附录 B |
+
+**本文只链接、不复述理由。** 若发现正文里重复解释了某条决策的原因，那是需要清理的重复——理由只有一处权威来源，就是 ADR 本身。
 
 ---
 
@@ -829,7 +837,9 @@ metadata:
 
 ---
 
-## 附录 C · 一手来源
+## 附录 C · 来源与出处
+
+> 下面绝大多数是一手来源；标了"社区维护"的那条是二手，只作参考。
 
 - Agent Skills 规范：https://agentskills.io/specification
 - Agent Skills 客户端实现指南：https://agentskills.io/client-implementation/adding-skills-support
