@@ -16,7 +16,7 @@
 
 1. **不做「下载到本地再靠客户端原生加载」。** 本项目采用**服务端权威**：skill 的目录与文件都在服务器上，客户端通过远程地址按需读取。好处是**渐进加载天然成立**（搜索只给 L1、正文接口只给 L2、文件接口只给 L3，服务端在接口层强制），且**本地不落任何 skill 副本**。
 
-2. **唯一需要本地安装的是一个「网关 skill」+ 一个 CLI。** 网关 skill 的 frontmatter 是常驻上下文的全部成本（≈80 tokens——它是我们自己写的纯英文 skill），它的正文记录服务地址与调用协议；CLI 负责登录与持有凭据。目录**不常驻**——搜索、排序、查找全部在服务端。
+2. **唯一需要本地安装的是一个「网关 skill」+ 一个 CLI。** 网关 skill 的 frontmatter 是常驻上下文的全部成本（≈80 tokens），它的正文记录服务地址与调用协议；CLI 负责登录与持有凭据。目录**不常驻**——搜索、排序、查找全部在服务端。
 
 3. **一个网关 skill 解决了 L1 天花板。** 本机 30 个真实 SKILL.md 实测：每个 skill 的 L1 平均 318 字符，**其中约 33% 是 CJK 字符**——按 4 字符/token 折算约 80 tokens，但 CJK 接近 1 token/字符，实际**约 160 tokens**。500 个 skill 全量安装 = **约 8 万 tokens 常驻**（口径见 §1.6）。网关模型下常驻的只有网关一个，**目录成本从 O(N) 降到 O(1)**。
 
@@ -269,7 +269,7 @@
 ### 2.1 三个平面
 
 ```
-管理面 ── 上传 / 校验 / 版本 / 命名空间 / 成员 / 审计
+管理面 ── 上传 / 校验 / 版本 / 命名空间 / 成员（v1 仅所有者） / 审计
    │ 发布：不可变版本 + digest
 存储面 ── blob（按 sha256 内容寻址）/ skill / version / manifest
    │ 检索与分发
@@ -429,13 +429,19 @@ CREATE TABLE namespace (
 CREATE TABLE namespace_member (
   namespace_id TEXT NOT NULL REFERENCES namespace(id) ON DELETE CASCADE,
   user_id      TEXT NOT NULL REFERENCES user(id) ON DELETE CASCADE,
-  role         TEXT NOT NULL,                 -- owner | editor | viewer
+  role         TEXT NOT NULL,                 -- owner | editor | viewer（v1 只写 owner）
   added_at     TEXT NOT NULL,
   PRIMARY KEY (namespace_id, user_id)
 );
 ```
 
-**注册时自动为每个用户建一个个人命名空间**（`slug = handle`）。这样 `(namespace_id, name)` 唯一这一个约束**同时覆盖了「个人内不重名」与「团队内不重名」**——正是你提的 `user_id + skill_name` 的意图，且将来升级成团队命名空间不需要迁移。
+> **v1 范围**：`namespace_member` 只写入**所有者那一行**（`role = 'owner'`）；**成员管理与角色判定推迟**——这一版只做「一个自然人登录并管自己的 skill」，不做组织 / 成员 / 角色体系（见 [`prd.md`](prd.md) §用户与场景）。表结构保留，将来开团队命名空间时不需要迁移。
+
+> **`visibility` 在 v1 的用法**：v1 不做分享与公共发现（见 [`prd.md`](prd.md) §范围 不做 #7），实际只会用到 `private`；`public` / `unlisted` 保留给 v2，**v1 不必为它们写测试**。
+
+**注册时自动为每个用户建一个个人命名空间**（`slug = handle`）。这样 `(namespace_id, name)` 唯一这一个约束**同时覆盖了「个人内不重名」与将来的「团队内不重名」**——正是你提的 `user_id + skill_name` 的意图，且将来升级成团队命名空间不需要迁移。
+
+> **保留 slug**：网关 skill 发布在一个**保留命名空间**里（如 `skill-platform`，见 §4.5），而 `namespace.slug` 有 UNIQUE 约束。所以注册时**必须拒绝**落在保留名单里的 `handle`——否则该用户注册会直接撞 UNIQUE 失败，或更糟：遮蔽网关的发布路径。
 
 ### 3.3 Skill 与版本
 
@@ -508,6 +514,8 @@ digest = sha256( concat( for f in files_sorted_by_relpath:
 
 ### 3.4 检索与统计
 
+**索引范围**：`skill_fts` 建在 `skill` 全表上（FTS5 外部内容表，只索引 L1 三个字段）。**所有权过滤在查询时做**——检索必须 JOIN `namespace`，把结果限定在**调用者有权访问的命名空间**内，绝不能拿 `skill_fts` 的 MATCH 结果直接返回。v1 每个用户只有个人命名空间，所以实际等于「只搜自己」；写漏这个谓词就会泄露别人的 `private` skill。
+
 ```sql
 CREATE VIRTUAL TABLE skill_fts USING fts5(
   name, title, description,
@@ -571,6 +579,8 @@ skill 的内容会被客户端取走、在客户端环境里使用，事后追�
 
 #### `GET /v1/skills` —— 搜索（只返回 L1）
 
+**结果范围**：只返回**调用者有权访问的命名空间**里的 skill。v1 每个用户只有自己的个人命名空间，所以实际就是「只能搜到自己的」——**不做跨用户发现**（见 [`prd.md`](prd.md) §用户与场景）。`namespace` 参数是在这个范围内再收窄，不是绕过它的开关。
+
 | 参数 | 说明 |
 |---|---|
 | `q` | 关键词；空则按 `sort` 返回 |
@@ -583,7 +593,7 @@ skill 的内容会被客户端取走、在客户端环境里使用，事后追�
 {
   "skills": [
     { "id": "01J...", "name": "pdf-tools", "title": "PDF 工具",
-      "description": "…", "namespace": "acme", "visibility": "public",
+      "description": "…", "namespace": "alice", "visibility": "private",
       "digest": "sha256:…", "updated_at": "2026-09-26T10:00:00Z" }
   ],
   "next_cursor": null
@@ -598,8 +608,8 @@ skill 的内容会被客户端取走、在客户端环境里使用，事后追�
 {
   "id": "01J...", "name": "pdf-tools", "title": "PDF 工具",
   "description": "…",
-  "namespace": { "slug": "acme", "title": "Acme 团队" },
-  "visibility": "public",
+  "namespace": { "slug": "alice", "title": "个人" },
+  "visibility": "private",
   "frontmatter": { "name": "pdf-tools", "description": "…", "metadata": { "…": "原样透传" } },
   "version": {
     "digest": "sha256:…", "published_at": "2026-09-26T10:00:00Z",
@@ -700,13 +710,13 @@ skill 的内容会被客户端取走、在客户端环境里使用，事后追�
 ```markdown
 ---
 name: skill-platform
-description: 访问团队的 skill 库。当任务需要特定领域能力（文档处理、数据分析、
-  飞书操作、代码规范等）时，先用它检索团队已托管的 skill，再按检索结果使用。
+description: 按需取用已托管的 skill。当任务需要特定领域能力（文档处理、数据分析、
+  飞书操作、代码规范等）时，先用它检索可用的 skill，再按检索结果取用。
 metadata:
   platform_api_version: "1"
 ---
 
-# 团队 Skill 库
+# 我的 skill 库
 
 服务地址：`https://<host>`
 
@@ -750,7 +760,7 @@ metadata:
 | `store.py` | **扩**：namespace / skill / version / version_file / blob / user / token 等表。现有"每操作开新连接 + WAL + busy_timeout"可留 |
 | `store.permissions_version` + `permissions.PermissionCache` | **保留复用**——"版本计数器失效 + TTL 兜底 + 失败 fail-closed"正好是搜索索引缓存需要的机制 |
 | `materializer.py` | **基本作废**。本项目不再把 skill 落到本地。归档/导出功能若将来需要，再从它改 |
-| `permissions.py` | **退化**：不做门控，只做**可见性**（public/unlisted/private）与命名空间成员。family 匹配（`lark` 覆盖 `lark-*`）对集合型 skill 仍有用 |
+| `permissions.py` | **退化**：不做门控，只做**可见性**（public/unlisted/private）；**命名空间成员判定推迟**（v1 只有所有者一行）。family 匹配（`lark` 覆盖 `lark-*`）对集合型 skill 仍有用 |
 | `__main__.py` | 拆成两组子命令：**客户端**（login/setup/search/show/get）与**管理端**（publish/versions/...） |
 | `schema.py` | 加表；保留 `meta` + schema_version 迁移机制 |
 
@@ -773,7 +783,7 @@ metadata:
 
 - OAuth 2.1 AS：`/login`、`/oauth/authorize`、`/oauth/token`、三种注册方式（CIMD + DCR + 预注册）
 - CLI `login`（loopback PKCE）+ 无人值守 `--client-credentials`
-- 命名空间成员与可见性生效；审计日志
+- 可见性生效（**成员判定推迟**，v1 只有所有者一行）；审计日志
 - 管理端写接口
 
 ### P2 · MCP 适配器与检索质量
