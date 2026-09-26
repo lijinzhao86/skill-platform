@@ -26,7 +26,7 @@
 | 1 | 正文内细切 `l2#n`，每段单独定价 | `design.md` 第 0 章核心机制表 `:23`、设计边界 `:47`；第 5 章概念模型 `kind` 枚举 `:720`；附录 `:826` | **砍掉。** 付费（将来若做）只落在标准已有的**层与层之间** → [ADR 0009](../decisions/0009-drop-l2n.md) |
 | 2 | 「节点必须与官方加载层严格对应」 | `design.md` `:39` | 需改述：L1/L3 对应标准层，`l2#n` 正是不对应的那个 → [ADR 0009](../decisions/0009-drop-l2n.md) |
 | 3 | 「细切标记的具体语法」列为待决问题 | `design.md` 第 6 章 Q1 | **该问题已被关闭**，不必再定语法 → [ADR 0009](../decisions/0009-drop-l2n.md) |
-| 4 | **模块 2.5「分发与运行时门控」整套**：本地缓存实现 Gate、`MaterializePlan` / `LockedManifest` / `GateDecision` / `PaywallPolicy`、materializer 一次性全部落盘 | `design.md` `:237`–`:293`（另散见 `:40`、`:417`、`:428`、`:439`、`:463`、`:607`、`:613`、`:615`、`:697`、`:806`、`:813`、`:824`）；blueprint 侧的同一模型见"按层分发"一节 `:275`–`:281` | **模型整个换掉**：服务端权威、**本地不落 skill 副本**，门控只在服务端。`materializer.py` 基本作废 → [ADR 0001](../decisions/0001-server-authoritative.md)、[ADR 0002](../decisions/0002-gateway-skill-and-cli.md) |
+| 4 | **模块 2.5「分发与运行时门控」整套**：本地缓存实现 Gate、`MaterializePlan` / `LockedManifest` / `GateDecision` / `PaywallPolicy`、materializer 一次性全部落盘 | `design.md` `:237`–`:293`（另散见 `:40`、`:417`、`:428`、`:439`、`:463`、`:607`、`:613`、`:615`、`:697`、`:806`、`:813`、`:824`）；blueprint 侧的同一模型见"按层分发"一节 `:275`–`:281` | **模型整个换掉**：服务端权威、**本地不落 skill 副本**，门控只在服务端。`materializer.py` 已删除 → [ADR 0001](../decisions/0001-server-authoritative.md)、[ADR 0002](../decisions/0002-gateway-skill-and-cli.md) |
 | 5 | 「L3 的落盘与门控是核心路径，不是附属功能」 | `design.md` `:40` | 同上——**落盘已不是路径**，L3 由服务端按需下发 → [ADR 0001](../decisions/0001-server-authoritative.md) |
 | 6 | 「保留细切能力（在正文内切出「前几节免费」）」 | `blueprint.md` `:353` | 同上，**不保留** → [ADR 0009](../decisions/0009-drop-l2n.md) |
 
@@ -34,7 +34,7 @@
 
 | # | 文档里的说法 | 位置 | 现在 |
 |---|---|---|---|
-| 7 | skill-platform 的 **materializer** 产出「目录树 + SKILL.md」→「天然跨线」，是被低估的优势 | `blueprint.md` `:96` | **跨线能力仍在，但来源变了**：来自服务端权威 + 网关 skill + API（任何能发 HTTP 的 agent 都能用），不来自 materializer。该模块已基本作废 → [ADR 0001](../decisions/0001-server-authoritative.md) |
+| 7 | skill-platform 的 **materializer** 产出「目录树 + SKILL.md」→「天然跨线」，是被低估的优势 | `blueprint.md` `:96` | **跨线能力仍在，但来源变了**：来自服务端权威 + 网关 skill + API（任何能发 HTTP 的 agent 都能用），不来自 materializer。该模块已删除 → [ADR 0001](../decisions/0001-server-authoritative.md) |
 
 ### 三、需要协调或确认
 

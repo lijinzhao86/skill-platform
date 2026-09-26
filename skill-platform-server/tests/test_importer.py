@@ -1,11 +1,11 @@
 import pytest
 
-from skill_platform.importer import (
+from skill_platform_server.importer import (
     discover_skills,
     import_source,
     parse_frontmatter,
 )
-from skill_platform.store import SkillStore
+from skill_platform_server.store import SkillStore
 
 
 def write(path, text):

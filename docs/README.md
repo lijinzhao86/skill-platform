@@ -62,7 +62,7 @@ docs/
 写完跑校验器：
 
 ```bash
-python3 .claude/skills/docs-architecture/check_docs.py
+python3 .claude/skills/docs-architecture/scripts/check_docs.py
 ```
 
 ## 阅读顺序
@@ -75,7 +75,7 @@ python3 .claude/skills/docs-architecture/check_docs.py
 
 ## 已知的待清理项
 
-**目标态文档（`target/`）与当前决策的差异已逐条记录在 [`target/README.md`](target/README.md)**——那里是唯一权威清单，不要在本文件里重复维护。概要：`l2#n` 已否决、模块 2.5 的本地 Gate 模型已整体换掉、`materializer` 基本作废。
+**目标态文档（`target/`）与当前决策的差异已逐条记录在 [`target/README.md`](target/README.md)**——那里是唯一权威清单，不要在本文件里重复维护（本行原先还附了一段「概要」，2026-09-26 删掉：复述就是漂移的起点）。
 
 尚待处理：
 

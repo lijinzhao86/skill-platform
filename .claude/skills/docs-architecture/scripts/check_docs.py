@@ -11,7 +11,7 @@ Checks only what is objectively decidable:
 It does NOT judge prose quality, factual accuracy, or whether a measurement
 states its basis. Those are governed by the skill's rules and by people.
 
-Two deliberate limits:
+Three deliberate limits:
 
   * Link targets are verified, **anchors are not**. ``[x](#some-section)`` and
     ``file.md#some-section`` confirm only that the file exists. Only inline
@@ -22,10 +22,8 @@ Two deliberate limits:
     containing a bare ``)`` (e.g. ``foo(1).md``) is not parsed — none exist in
     this repo, and the failure mode is a visible false positive, not a silent
     pass.
-  * Heading extraction and the ADR section check both ignore fenced code blocks,
-    because this repo embeds whole example documents (the gateway SKILL.md
-    inside technical-design.md chapter 5) whose headings are content, not
-    structure.
+  * Heading extraction and the ADR section check both ignore fenced code blocks:
+    a fenced block is an example, so headings inside it are content, not structure.
 
 Usage:
     python3 check_docs.py [--docs PATH]
@@ -80,6 +78,17 @@ def find_repo_root(start: str) -> str:
     raise SystemExit("could not locate a directory containing docs/")
 
 
+def skill_root() -> str:
+    """The skill's own directory — this script lives in `scripts/` beneath it.
+
+    Computed from `__file__` rather than pinned to an absolute path, but it must
+    stay exactly two levels up: the skill's own links are resolved relative to
+    that directory, so pointing it at `scripts/` would check nothing at all and
+    still report success.
+    """
+    return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+
 def read_text(path: str) -> str:
     """Read a file, surviving bytes that are not valid UTF-8."""
     with open(path, encoding="utf-8", errors="replace") as fh:
@@ -106,7 +115,11 @@ def analyse(text: str) -> tuple[str, list[str], str]:
             kept.append(line)
         else:
             closer = FENCE_CLOSE_RE.match(line)
-            if closer and closer.group(1)[0] == fence_char and len(closer.group(1)) >= fence_len:
+            if (
+                closer
+                and closer.group(1)[0] == fence_char
+                and len(closer.group(1)) >= fence_len
+            ):
                 fence_char, fence_len = "", 0
 
     headings: list[str] = []
@@ -140,7 +153,9 @@ def check_topics(path: str, filename: str) -> list[str]:
 
 def iter_markdown(root: str, skip_dirs: frozenset[str] = frozenset()):
     for dirpath, dirnames, filenames in os.walk(root):
-        dirnames[:] = [d for d in dirnames if not d.startswith(".") and d not in skip_dirs]
+        dirnames[:] = [
+            d for d in dirnames if not d.startswith(".") and d not in skip_dirs
+        ]
         for name in filenames:
             if name.endswith(".md"):
                 yield os.path.join(dirpath, name)
@@ -160,7 +175,9 @@ def strip_link_title(target: str) -> str:
     return target
 
 
-def check_links(root: str, skip_dirs: frozenset[str] = frozenset()) -> tuple[int, list[str]]:
+def check_links(
+    root: str, skip_dirs: frozenset[str] = frozenset()
+) -> tuple[int, list[str]]:
     """Return (links checked, broken links as 'file -> target')."""
     total = 0
     broken = []
@@ -229,9 +246,13 @@ def check_version(version_dir: str, name: str) -> list[str]:
         if os.path.isdir(path):
             # `decisions` gets a better message from the explicit check below.
             if entry not in VERSION_SUBDIRS and entry != "decisions":
-                problems.append(f"{name}/{entry}/ 不在约定内（版本文件夹只放四份文档 + iterations/）")
+                problems.append(
+                    f"{name}/{entry}/ 不在约定内（版本文件夹只放四份文档 + iterations/）"
+                )
         elif entry not in known_files:
-            problems.append(f"{name}/{entry} 不在约定内（版本文件夹只放四份文档 + known-issues.md）")
+            problems.append(
+                f"{name}/{entry} 不在约定内（版本文件夹只放四份文档 + known-issues.md）"
+            )
 
     iterations = os.path.join(version_dir, VERSION_SUBDIRS[0])
     if os.path.isdir(iterations):
@@ -241,7 +262,9 @@ def check_version(version_dir: str, name: str) -> list[str]:
             if not os.path.isfile(os.path.join(iterations, filename)):
                 problems.append(f"{name}/iterations/{filename} 不是文件")
             elif not ITERATION_RE.match(filename):
-                problems.append(f"{name}/iterations/{filename} 命名不合规（应为 NNNN-slug.md）")
+                problems.append(
+                    f"{name}/iterations/{filename} 命名不合规（应为 NNNN-slug.md）"
+                )
 
     # Decisions must never live inside a version folder.
     if os.path.isdir(os.path.join(version_dir, "decisions")):
@@ -251,11 +274,17 @@ def check_version(version_dir: str, name: str) -> list[str]:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Validate docs/ against the docs-architecture conventions.")
+    parser = argparse.ArgumentParser(
+        description="Validate docs/ against the docs-architecture conventions."
+    )
     parser.add_argument("--docs", help="path to docs/ (default: <repo>/docs)")
     args = parser.parse_args()
 
-    docs = os.path.abspath(args.docs) if args.docs else os.path.join(find_repo_root(os.path.dirname(__file__)), "docs")
+    docs = (
+        os.path.abspath(args.docs)
+        if args.docs
+        else os.path.join(find_repo_root(os.path.dirname(__file__)), "docs")
+    )
     versions_dir = os.path.join(docs, "versions")
 
     print(f"docs = {docs}\n")
@@ -266,18 +295,28 @@ def main() -> int:
     if not os.path.isdir(versions_dir):
         problems.append("docs/versions/ 不存在")
     else:
-        entries = sorted(e for e in os.listdir(versions_dir) if os.path.isdir(os.path.join(versions_dir, e)))
+        entries = sorted(
+            e
+            for e in os.listdir(versions_dir)
+            if os.path.isdir(os.path.join(versions_dir, e))
+        )
         for stray in sorted(os.listdir(versions_dir)):
             if stray.startswith("."):
                 continue
             if not os.path.isdir(os.path.join(versions_dir, stray)):
-                problems.append(f"docs/versions/{stray} 不在约定内（versions/ 下只放版本文件夹）")
+                problems.append(
+                    f"docs/versions/{stray} 不在约定内（versions/ 下只放版本文件夹）"
+                )
         if not entries:
             problems.append("docs/versions/ 下没有任何版本文件夹")
 
     for name in entries:
         version_dir = os.path.join(versions_dir, name)
-        found = [f for f in REQUIRED_VERSION_FILES if os.path.isfile(os.path.join(version_dir, f))]
+        found = [
+            f
+            for f in REQUIRED_VERSION_FILES
+            if os.path.isfile(os.path.join(version_dir, f))
+        ]
         missing = [f for f in REQUIRED_VERSION_FILES if f not in found]
         print(name)
         print(f"  ✓ {'  '.join(found)}" if found else "  （无必需文档）")
@@ -302,8 +341,7 @@ def main() -> int:
     # The skill's own links point into docs/ as well. Templates are skipped: their
     # links are written relative to the version folder they will be copied into,
     # so they cannot resolve where they sit.
-    skill_dir = os.path.dirname(os.path.abspath(__file__))
-    skill_total, skill_broken = check_links(skill_dir, frozenset({"templates"}))
+    skill_total, skill_broken = check_links(skill_root(), frozenset({"templates"}))
     print(f"\n  skill 自身链接：检查 {skill_total} 条（templates/ 按设计跳过）")
     if skill_broken:
         problems.append(f"skill 目录内 {len(skill_broken)} 条链接是死链")

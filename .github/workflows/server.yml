@@ -1,10 +1,20 @@
-name: CI
+# Everything about the server lives under skill-platform-server/, so only changes
+# there (plus the gateway content its image carries) trigger this.
+name: Server
 
 on:
   push:
     branches: [ main ]
+    paths: &paths
+      - 'skill-platform-server/**'
+      - 'gateway/**'
+      # .dockerignore decides what the image build below can see, so a change to it
+      # has to run this workflow.
+      - '.dockerignore'
+      - '.github/workflows/server.yml'
   pull_request:
     branches: [ main ]
+    paths: *paths
 
 permissions:
   contents: read
@@ -17,12 +27,15 @@ jobs:
   test:
     name: Test and lint
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: skill-platform-server
     steps:
       - name: Checkout
         uses: actions/checkout@v7
 
       - name: Set up uv
-        uses: astral-sh/setup-uv@v10
+        uses: astral-sh/setup-uv@v10.2.0
         with:
           enable-cache: true
 
@@ -64,11 +77,13 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
 
+      # The build context is the repository root because the image also carries
+      # gateway/ — the content the API serves. .dockerignore trims the rest.
       - name: Build and push
         uses: docker/build-push-action@v7
         with:
           context: .
-          file: .cicd/Dockerfile
+          file: skill-platform-server/Dockerfile
           push: true
           tags: |
             ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ github.sha }}

@@ -288,7 +288,7 @@
 | **AS（授权服务器）** | 登录、授权、令牌签发与刷新、撤销 | 与 API 同进程（规范允许），用 `authlib` |
 | **Blob Store** | 按 sha256 存文件字节 | 本地目录 |
 | **Blob GC** | 回收无版本引用的 blob | 后台任务 |
-| **CLI** | 登录、装网关、搜/看/取；**持有凭据** | 扩展现有 `skill_platform` 包 |
+| **CLI** | 登录、装网关、搜/看/取；**持有凭据** | 独立的 `skill-platform-cli/`（§2.4）；**技术栈未定**，基线里也没有可复用的客户端代码 |
 | **MCP 适配器** | 把 `/v1/*` 包成 `skills/list` + `resources/read` | P2，能力协商 |
 
 **起步全部可以跑在一个进程 + SQLite 上**，不要过早拆服务。
@@ -314,6 +314,26 @@ agent 依 skill 指示完成任务
 ```
 
 **服务端在接口层强制分层**：搜索接口物理上拿不到正文，正文接口拿不到文件，文件接口只给单个文件。**这就是渐进加载的落实方式**——不靠模型自觉，靠接口形状。
+
+### 2.4 代码仓库布局
+
+**一个仓库，多个独立构建的子项目。** 每个子项目在自己的目录里自包含——工具链、测试、Dockerfile、CI 都是它自己的事；**仓库根不假设任何语言**，所以第三个子项目是 Node、Rust 还是别的，都不必改动已有的。
+
+| 路径 | 是什么 |
+|---|---|
+| `skill-platform-server/` | API + AS + Blob Store + GC，**同一个进程**（§2.2 的表）。自带 `pyproject.toml` / `Dockerfile` / `uv.lock` / `tests/`；Python 包在 `src/skill_platform_server/`。它的 CI 是仓库根的 `.github/workflows/server.yml`——workflow 只能放在仓库根，**不能放进子项目目录** |
+| `skill-platform-cli/` | CLI（§4.6 的两组子命令）。**技术栈尚未确定**，所以目录里暂时只有一份说明，没有任何构建配置 |
+| `gateway/skill-platform/` | 网关 skill 的源（§5）。**发布时用的就是它这个目录** |
+| `.claude/skills/docs-architecture/` | 文档约定的权威：规则（`SKILL.md`）、模板，以及 `scripts/` 里那个校验器与它的测试。跨子项目，不属于任何一个包 |
+| `.github/workflows/` | 一个 workflow 服务一个子项目，外加一个服务 `docs/` 与 `.claude/`（它们不属于任何子项目）；各自带 `paths` 过滤，改 A 不会触发 B 的 CI。**当前状态：两个 workflow 已配好、也在 CI 上实跑验证过（两个 check 均 pass），但已用 `gh workflow disable` 停用**——按产品负责人的要求，现在只把仓库当版本库用。注意 `disable` 是**远端状态、不在 git 里**：改名或新增 workflow 文件会被 GitHub 当成新 workflow 而**自动启用**（本仓库已经这样意外启用过一次） |
+
+**四条约束**：
+
+1. **仓库根不放任何单一语言的东西。** 没有根 `pyproject.toml`，也没有根 `package.json`。根上只留跨子项目的内容：`docs/`、`gateway/`、`.github/`、`.claude/`，以及各子项目自己的目录。每个子项目的工具链配置在**它自己的目录里**——这正是「技术栈可以异构」与「可以单独 CI/CD」这两条要求的落点。
+   - `.claude/skills/docs-architecture/scripts/` 里确实有一个 Python 小项目，但它**不是子项目**，而是跨子项目的仓库工具的宿主：把它的配置放进那个 skill 目录，正是为了**不在仓库根放语言配置**。校验器与它的测试同处一目录，ruff 因此就近找到规则集，不必传 `--config`。
+2. **不为可能出现的子项目预留目录**（不用 `packages/*`、`apps/*`）。现在有几个就摆几个；真要多一个，加一个目录、加一个 workflow 即可，已有子项目一个字都不用动。同理，不预先造 `cli.yml`：CLI 还没有技术栈，一个跑不出任何东西的 workflow 只会假装绿。
+3. **`gateway/` 是跨子项目的，所以它不放在任何子项目目录里。** 服务端要它（`GET /gateway/SKILL.md`、发布到 well-known），CLI 也要它（`setup` 装它）。它同时是一个 skill 目录——标准要求目录名等于 `name`（§1.1），所以是 `gateway/skill-platform/`；直接放在仓库根下会得到 `skill-platform/skill-platform/`。名字用 `gateway` 而不是 `skills`：复数会暗示这里有一堆 skill，而实际永远只有 §4.5 那一个。
+4. **Dockerfile 跟着它构建的东西走。** 服务端镜像的定义在 `skill-platform-server/Dockerfile`，不在仓库根的 `.cicd/`。构建上下文**仍是仓库根**（镜像要一并带上 `gateway/`），由 `.dockerignore` 收敛；服务端的 workflow 因此也在 `gateway/**` 变化时触发。
 
 ---
 
@@ -676,7 +696,7 @@ skill 的内容会被客户端取走、在客户端环境里使用，事后追�
 |---|---|---|
 | `GET` | `/.well-known/agent-skills/index.json` | V2，**只含网关 skill 一个 entry** |
 | `GET` | `/.well-known/skills/index.json` | V1，同上（旧版 CLI 用） |
-| `GET` | `/.well-known/skills/skill-platform/<relpath>` | V1 的逐文件拉取 |
+| `GET` | `/.well-known/gateway/skill-platform/<relpath>` | V1 的逐文件拉取 |
 | `GET` | `/gateway/SKILL.md` | 网关 skill 正文（CLI `setup` 用） |
 
 **未发布时必须返回真 404**（见 1.5 的坑）。**网关 skill 发布在一个保留命名空间里**（如 `skill-platform`），它本身也是一个普通 skill，有版本、有 digest。
@@ -707,39 +727,19 @@ skill 的内容会被客户端取走、在客户端环境里使用，事后追�
 
 一个普通 skill，但有特殊职责：**它是本地唯一常驻的东西，也是协议本身。**
 
-```markdown
----
-name: skill-platform
-description: 按需取用已托管的 skill。当任务需要特定领域能力（文档处理、数据分析、
-  飞书操作、代码规范等）时，先用它检索可用的 skill，再按检索结果取用。
-metadata:
-  platform_api_version: "1"
----
+**源文件在 [`gateway/skill-platform/SKILL.md`](../../../gateway/skill-platform/SKILL.md)，那份文件是权威**——本文不抄它的正文（§2.3 的铁律：一个事实只有一个权威位置；抄一份就一定会漂移）。这里只记设计层面必须成立的三件事：
 
-# 我的 skill 库
-
-服务地址：`https://<host>`
-
-## 使用协议（按顺序，不要跳步）
-
-1. 检索：`skill-platform search "<关键词>"`
-   → 只返回名称与描述。**先看描述判断相关性，不要一次搜很多词。**
-2. 详情：`skill-platform show <id>`
-   → 返回完整文件清单但**没有内容**。据此判断这个 skill 有没有你要的那部分。
-3. 取正文：`skill-platform get <id>`
-4. 取文件：正文里引用到的文件才取 `skill-platform get <id> <relpath>`
-
-## 停止条件
-
-- 搜索结果没有相关项 → 直接告诉用户没找到，**不要**逐个试。
-- 清单里有文件但正文没引用 → **不要取**。
-```
+| 字段 | 必须是什么 |
+|---|---|
+| `name` | `skill-platform`。标准的 MUST 要求它等于父目录名，所以源文件落在 `gateway/skill-platform/`（§2.4） |
+| `description` | 写得**足够广**——目录不常驻，「该不该去查 skill 库」全靠这一句。见 §5.2 第 1 条 |
+| `metadata.platform_api_version` | 协议版本号；CLI `setup` 据此判断本地网关是否过期。见 §5.2 第 3 条 |
 
 ### 5.2 三条设计约束
 
 1. **`description` 决定了整个发现体验。** 目录不常驻，所以"该不该去查 skill 库"全靠这句。它必须写得**广**（覆盖多类任务），而不是窄（只描述某一个场景）。这是全项目最需要打磨的一段文字。
 
-2. **正文必须短且强指令。** 它每次被触发都会进上下文并**在整个会话常驻**。冗长的协议说明会持续占用预算。上面那份大约 200 tokens，是合适的量级。
+2. **正文必须短且强指令。** 它每次被触发都会进上下文并**在整个会话常驻**。冗长的协议说明会持续占用预算。[那份正文](../../../gateway/skill-platform/SKILL.md)大约 200 tokens，是合适的量级。
 
 3. **它必须能更新。** 网关正文就是协议——如果 API 变了而用户本地的网关是旧的，agent 会按旧协议调用。所以：
    - 网关 frontmatter 里带 `metadata.platform_api_version`
@@ -750,7 +750,9 @@ metadata:
 
 ## 第 6 章 · 与现有代码的关系
 
-现有 `skill_platform/` 是可用种子，分层也对。逐项：
+原基线是单包 `skill_platform/`，分层是对的。**它已经按 §2.4 的布局搬完**（2026-09-26）：可复用的四个模块现在在 `skill-platform-server/src/skill_platform_server/`，`materializer.py` 与旧 `__main__.py` 已删除。
+
+下表逐项说明处置。**四个模块是原样搬迁（0 行改动），行号仍然有效**——[`known-issues.md`](known-issues.md) 里那些 `文件:行号` 锚点因此照旧可用，只有 `materializer.py` / `__main__.py` 的锚点随模块删除而失效。
 
 | 现有 | 处置 |
 |---|---|
@@ -759,10 +761,10 @@ metadata:
 | `importer._extract_links` | 复用，用于"正文引用了不存在的文件"这类警告级诊断 |
 | `store.py` | **扩**：namespace / skill / version / version_file / blob / user / token 等表。现有"每操作开新连接 + WAL + busy_timeout"可留 |
 | `store.permissions_version` + `permissions.PermissionCache` | **保留复用**——"版本计数器失效 + TTL 兜底 + 失败 fail-closed"正好是搜索索引缓存需要的机制 |
-| `materializer.py` | **基本作废**。本项目不再把 skill 落到本地。归档/导出功能若将来需要，再从它改 |
+| `materializer.py` | **已删除**（2026-09-26）。本项目不再把 skill 落到本地，ADR 0001 早已判它作废。归档/导出若将来真需要，从 git 历史取回改写 |
 | `permissions.py` | **退化**：不做门控，只做**可见性**（public/unlisted/private）；**命名空间成员判定推迟**（v1 只有所有者一行）。family 匹配（`lark` 覆盖 `lark-*`）对集合型 skill 仍有用 |
-| `__main__.py` | 拆成两组子命令：**客户端**（login/setup/search/show/get）与**管理端**（publish/versions/...） |
-| `schema.py` | 加表；保留 `meta` + schema_version 迁移机制 |
+| `__main__.py` | **已删除**。它的子命令全部属于旧模型，没有可搬的。新的两组子命令——**客户端**（login/setup/search/show/get）与**管理端**（publish/versions/…）——在 `skill-platform-cli/` 里另写（§4.6） |
+| `schema.py` | 加表；`meta` + **schema_version 的校验与迁移需要新建**——基线代码只写入版本号、从不与常量比对，所以并不存在可「保留」的迁移机制（证据见 [`known-issues.md`](known-issues.md) L2） |
 
 **要新增的核心能力**：完整 YAML 解析器、严格校验器、digest 计算、blob store + GC、搜索与排序、OAuth AS、HTTP 服务、CLI 登录流程、网关 skill 的安装与更新。
 
@@ -774,6 +776,7 @@ metadata:
 
 - 表结构落地（第 3 章）+ 严格校验 + digest + 不可变版本
 - 四个读接口 + 服务端搜索排序
+- **服务端可运行入口**（ASGI app）。**当前镜像构建得出来但起不来**：`skill-platform-server/Dockerfile` 的 `CMD` 指向本项，在它交付之前 `:latest` 不是可用产物
 - **鉴权用一把静态令牌先行**（AS 放 P1），把链路跑通
 - CLI：`setup` / `search` / `show` / `get`
 - 网关 skill 发布到 well-known 索引（V2 + V1 两条路径）

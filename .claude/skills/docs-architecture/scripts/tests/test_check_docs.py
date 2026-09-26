@@ -1,8 +1,8 @@
 """Tests for the docs-architecture validator.
 
-The validator lives at .claude/skills/docs-architecture/check_docs.py, outside the
-package, so it is loaded by path. Each test builds a synthetic docs/ tree; most of
-these cases come from defects found in the validator's first audit.
+The validator is a standalone script rather than an importable module, so it is
+loaded by path from the directory above. Each test builds a synthetic docs/ tree;
+most of these cases come from defects found in the validator's first audit.
 """
 
 from __future__ import annotations
@@ -14,8 +14,21 @@ from types import ModuleType
 
 import pytest
 
-REPO_ROOT = Path(__file__).resolve().parent.parent
-CHECKER_PATH = REPO_ROOT / ".claude" / "skills" / "docs-architecture" / "check_docs.py"
+
+def _find_checker(start: Path) -> Path:
+    """Walk up to the directory holding the validator, and return it.
+
+    Deliberately not a fixed number of parents: this file's depth below the
+    validator is a layout detail, and hardcoding it broke the moment the tests moved.
+    """
+    for candidate in (start, *start.parents):
+        checker = candidate / "check_docs.py"
+        if checker.is_file():
+            return checker
+    raise RuntimeError(f"cannot locate check_docs.py above {start}")
+
+
+CHECKER_PATH = _find_checker(Path(__file__).resolve())
 
 ADR_OK = "# 0001\n\n## 背景\n\n## 决定\n\n## 理由\n\n## 后果\n"
 
@@ -50,14 +63,25 @@ def _load_checker() -> ModuleType:
 check_docs = _load_checker()
 
 
-def build_version(root: Path, name: str = "v1-x", *, readme: str = GOOD_README,
-                  prd: str | None = GOOD_PRD, td: str | None = GOOD_TD,
-                  plan: str | None = GOOD_PLAN, make_iterations: bool = True) -> Path:
+def build_version(
+    root: Path,
+    name: str = "v1-x",
+    *,
+    readme: str = GOOD_README,
+    prd: str | None = GOOD_PRD,
+    td: str | None = GOOD_TD,
+    plan: str | None = GOOD_PLAN,
+    make_iterations: bool = True,
+) -> Path:
     """Create a version folder; pass None for a document to omit it."""
     version_dir = root / "versions" / name
     version_dir.mkdir(parents=True)
     (version_dir / "README.md").write_text(readme, encoding="utf-8")
-    for filename, content in (("prd.md", prd), ("technical-design.md", td), ("test-plan.md", plan)):
+    for filename, content in (
+        ("prd.md", prd),
+        ("technical-design.md", td),
+        ("test-plan.md", plan),
+    ):
         if content is not None:
             (version_dir / filename).write_text(content, encoding="utf-8")
     if make_iterations:
@@ -189,11 +213,15 @@ def test_adr_sections_inside_a_fence_do_not_count(tmp_path: Path) -> None:
     assert any("## 背景" in problem for problem in problems)
 
 
-def test_heading_inside_unterminated_fence_does_not_satisfy_topic(tmp_path: Path) -> None:
+def test_heading_inside_unterminated_fence_does_not_satisfy_topic(
+    tmp_path: Path,
+) -> None:
     version_dir = tmp_path / "docs" / "versions" / "v1-x"
     version_dir.mkdir(parents=True)
     path = version_dir / "README.md"
-    path.write_text("# v1\n\n> **状态**：x\n\n## 目标\n\n```python\n## 验收标准\n", encoding="utf-8")
+    path.write_text(
+        "# v1\n\n> **状态**：x\n\n## 目标\n\n```python\n## 验收标准\n", encoding="utf-8"
+    )
 
     missing = check_docs.check_topics(str(path), "README.md")
 
@@ -249,7 +277,9 @@ def test_iteration_naming(tmp_path: Path) -> None:
 def test_non_ascii_iteration_slug_is_allowed(tmp_path: Path) -> None:
     docs = tmp_path / "docs"
     version_dir = build_version(docs)
-    (version_dir / "iterations" / "0002-中文分词.md").write_text("# x\n", encoding="utf-8")
+    (version_dir / "iterations" / "0002-中文分词.md").write_text(
+        "# x\n", encoding="utf-8"
+    )
 
     problems = check_docs.check_version(version_dir, "v1-x")
 
@@ -264,7 +294,9 @@ def test_end_to_end_exit_code(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -
     assert check_docs.main() == 0
 
 
-def test_end_to_end_reports_failure(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_end_to_end_reports_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     docs = build_docs(tmp_path, td=None)
 
     monkeypatch.setattr(sys, "argv", ["check_docs.py", "--docs", str(docs)])
@@ -272,7 +304,9 @@ def test_end_to_end_reports_failure(tmp_path: Path, monkeypatch: pytest.MonkeyPa
     assert check_docs.main() == 1
 
 
-def test_stray_file_under_versions_is_reported(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_stray_file_under_versions_is_reported(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """versions/ holds version folders only — a loose file there is a violation."""
     docs = build_docs(tmp_path)
     (docs / "versions" / "notes.md").write_text("# stray\n", encoding="utf-8")
@@ -290,3 +324,13 @@ def test_decisions_dir_inside_version_reported_once(tmp_path: Path) -> None:
     problems = check_docs.check_version(version_dir, "v1-x")
 
     assert len([p for p in problems if "decisions" in p]) == 1
+
+
+def test_skill_root_is_the_directory_holding_skill_md() -> None:
+    """Guards a silent failure, not a crash.
+
+    The script lives in `scripts/` beneath the skill root. If a future move makes
+    `skill_root()` point anywhere else, the skill's own links stop being checked —
+    and the run still prints a green "0 条全部有效", so nothing else would notice.
+    """
+    assert (Path(check_docs.skill_root()) / "SKILL.md").is_file()
