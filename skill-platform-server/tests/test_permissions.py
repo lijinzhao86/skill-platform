@@ -1,4 +1,8 @@
-from skill_platform.permissions import PermissionCache, PermissionSnapshot, resolve
+from skill_platform_server.permissions import (
+    PermissionCache,
+    PermissionSnapshot,
+    resolve,
+)
 
 
 def make_snapshot(
@@ -112,6 +116,6 @@ def test_cache_reloads_on_permission_change(tmp_path):
 
 
 def _make_store(tmp_path):
-    from skill_platform.store import SkillStore
+    from skill_platform_server.store import SkillStore
 
     return SkillStore(str(tmp_path / "test.db"), owner_open_id="ou_owner")

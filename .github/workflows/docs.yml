@@ -1,0 +1,50 @@
+# The documentation convention and its validator are repository-wide, not part of
+# any subproject, so they get their own workflow.
+name: Docs
+
+on:
+  push:
+    branches: [ main ]
+    paths: &paths
+      - 'docs/**'
+      - '.claude/**'
+      # The docs link out to the gateway skill's source (technical-design.md §5), so
+      # moving that file breaks this workflow's link check.
+      - 'gateway/**'
+      - '.github/workflows/docs.yml'
+  pull_request:
+    branches: [ main ]
+    paths: *paths
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: Validate documents
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      # The real tree, not a fixture, and stdlib only — so it runs before the
+      # toolchain is installed and fails fast. The validator's own tests only ever
+      # build synthetic trees, so nothing else checks this repository's docs.
+      - name: Validate the repository's docs
+        run: python3 .claude/skills/docs-architecture/scripts/check_docs.py
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v10.2.0
+        with:
+          enable-cache: true
+
+      # The skill's scripts are a self-contained project: the validator, its tests
+      # and its ruff config share a directory, so the pinned rule set is found
+      # without passing --config.
+      - name: Test and lint the validator
+        working-directory: .claude/skills/docs-architecture/scripts
+        run: |
+          uv sync --locked
+          uv run pytest
+          uv run ruff check .
+          uv run ruff format --check .

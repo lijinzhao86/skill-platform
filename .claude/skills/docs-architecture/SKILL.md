@@ -158,8 +158,10 @@ versions/vN-主题/
 ## 四、写完自查
 
 ```bash
-python3 .claude/skills/docs-architecture/check_docs.py
+python3 .claude/skills/docs-architecture/scripts/check_docs.py
 ```
+
+校验器与它的测试都在 [`scripts/`](scripts/) 里——一个独立的小 Python 项目，测试与 lint 都从那个目录跑（`uv run pytest`、`uv run ruff check .`）。
 
 校验器检查**可客观判定**的部分：版本四件套是否齐全、五个问题的小节是否在、迭代文件名是否合规、**所有相对链接是否可解析**、决策是否误进版本文件夹、ADR 是否四段齐全。退出码非 0 即有不合规项。
 

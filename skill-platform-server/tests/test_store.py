@@ -1,7 +1,7 @@
 import pytest
 
-from skill_platform.permissions import resolve
-from skill_platform.store import SkillStore
+from skill_platform_server.permissions import resolve
+from skill_platform_server.store import SkillStore
 
 
 @pytest.fixture

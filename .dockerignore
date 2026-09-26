@@ -1,13 +1,22 @@
-__pycache__/
-*.pyc
-*.pyo
-.pytest_cache/
-*.egg-info/
-.venv/
+# The build context is the repository root, because the server image also carries
+# gateway/ (the content the API serves). Only those two directories are ever copied;
+# the list below keeps caches, the other subprojects and tooling out of the context.
+**/__pycache__/
+**/*.py[cod]
+**/.pytest_cache/
+**/.ruff_cache/
+**/*.egg-info/
+**/.venv/
+**/build/
 .git/
 .github/
+.claude/
 docs/
-tests/
+skill-platform-cli/
+**/tests/
+**/uv.lock
+README.md
+.gitignore
 *.db
 *.db-wal
 *.db-shm

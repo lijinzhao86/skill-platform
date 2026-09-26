@@ -89,9 +89,9 @@ wheels = [
 ]
 
 [[package]]
-name = "skill-platform"
-version = "0.1.0"
-source = { editable = "." }
+name = "skill-platform-docs-check"
+version = "0.0.0"
+source = { virtual = "." }
 
 [package.dev-dependencies]
 dev = [

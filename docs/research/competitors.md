@@ -33,7 +33,7 @@ SKILL.md 是共同格式，但分发入口分属三个阵营。**不认清这一
 | **Claude Skills 线** | SKILL.md（Anthropic 开放标准，agentskills.io） | 无单一官方市场，多个第三方 | Agensi、免费目录群 |
 | **自建 Hub 线** | SKILL.md / MCP | 魔搭 Skills 中心、Dify Marketplace | 阿里、Dify |
 
-**对 skill-platform 的含义**：skill-platform 的 materializer 产出的是「目录树 + SKILL.md」，这是三条线共用的装载格式，**天然跨线**。这是一个被低估的优势——竞品大多绑定单一生态（腾讯绑 OpenClaw、Agensi 主打 Claude Code 系），而 skill-platform 不需要选边。
+**对 skill-platform 的含义**：skill-platform 交付的是「目录树 + SKILL.md」，这是三条线共用的装载格式，**天然跨线**。这是一个被低估的优势——竞品大多绑定单一生态（腾讯绑 OpenClaw、Agensi 主打 Claude Code 系），而 skill-platform 不需要选边。
 
 ---
 
@@ -301,7 +301,7 @@ GitHub 话题规模：`agent-skills` 6,182 个仓库、`claude-skills` 3,971 个
 
 ### 3. 跨三线是被低估的优势
 
-腾讯绑 OpenClaw、Agensi 主跨 Claude Code 系、魔搭绑自家模型社区。skill-platform 走服务端权威 + 网关 skill + API（[ADR 0001](../decisions/0001-server-authoritative.md)），**任何能发 HTTP 请求的 agent 都能用**——跨线能力来自交付形态本身，不来自某个模块。这是定位里应该显式声明的能力。（原稿把它归因于 materializer；该模块已基本作废。）
+腾讯绑 OpenClaw、Agensi 主跨 Claude Code 系、魔搭绑自家模型社区。skill-platform 走服务端权威 + 网关 skill + API（[ADR 0001](../decisions/0001-server-authoritative.md)），**任何能发 HTTP 请求的 agent 都能用**——跨线能力来自交付形态本身，不来自某个模块。这是定位里应该显式声明的能力。（原稿把它归因于 materializer；该模块已删除。）
 
 ### 4. 两个必须正面回应的竞争动作
 
