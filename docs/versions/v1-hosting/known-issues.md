@@ -4,9 +4,9 @@
 > 方法：提交前独立代码审计（fresh agent，无上下文）→ 主 agent **逐条复现验证**
 > 处置：**先提交基线，暂不修复**——当时发现大多落在即将重写或废弃的模块上（见 [`technical-design.md`](technical-design.md) 第 6 章），现在修等于写即将删除的代码。
 >
-> **2026-09-26 结构重构后**：`materializer.py`、旧 `__main__.py` 已删除，Dockerfile 已改写为构建服务端并移入 `skill-platform-server/`。落在它们身上的 **6 条**（H1/H2/M1/M2/M8/L5）随之标为**已作废**；其余 **9 条**仍在 `importer` / `store` / `permissions` / `schema` / 文档里，等待 P0 重写时对照。
+> **2026-09-26 结构重构后**：`materializer.py`、旧 `__main__.py` 已删除，Dockerfile 已改写为构建服务端并移入 `skillmaster-server/`。落在它们身上的 **6 条**（H1/H2/M1/M2/M8/L5）随之标为**已作废**；其余 **9 条**仍在 `importer` / `store` / `permissions` / `schema` / 文档里，等待 P0 重写时对照。
 >
-> **路径约定**：下表的 `skill_platform_server/<module>.py` 指 `skill-platform-server/src/skill_platform_server/<module>.py`（布局见 [`technical-design.md`](technical-design.md) §2.4）。标 **已作废** 的条目**保留搬迁前的原路径**，便于回 git 历史对照。
+> **路径约定**：下表的 `skill_platform_server/<module>.py` 指 `skillmaster-server/reference-python/src/skill_platform_server/<module>.py`（布局见 [`technical-design.md`](technical-design.md) §2.4）。标 **已作废** 的条目**保留搬迁前的原路径**，便于回 git 历史对照。
 >
 > **2026-09-27 技术栈定为 Java 之后**：下表指向 Python 模块的 **8 条**锚点**降为历史记录**——那些模块已从「搬过来复用」改定位为「**可执行的设计参考**」，Java 会重写而非搬迁（见 [`technical-design.md`](technical-design.md) 第 6 章与 [ADR 0011](../../decisions/0011-server-and-cli-stack.md)）。**条数与分布不变**（没有删除任何代码），变的是这些锚点的用途：现在只用于回 git 历史对照。
 >
@@ -51,7 +51,7 @@
 
 复现：先 materialize `lark` + `brief`，再 `materialize(store, dest, names=["brieff"], prune=True)`（打错一个字母）→ `removed: ['brief', 'lark']`，`dest_root` **被清空**。目录里的外来文件也一并销毁。
 
-从 CLI 可达：`skill-platform materialize --dest X --prune brieff`。
+从 CLI 可达：`skillmaster materialize --dest X --prune brieff`。
 
 **修复方向**：`names` 先与 `list_skills()` 校验，未知即报错；给定 `names` 时 prune 只作用于这些名字，绝不作用于"除它们之外的一切"。
 
@@ -135,7 +135,7 @@
 
 `skill_platform/__main__.py:87-91` · **已作废**（模块已删除）
 
-`set_skill_access` 是一条 `UPDATE`，匹配 0 行，而**没有任何地方检查 `rowcount`**（`skill-platform-server/tests/test_store.py:57` 甚至注释了 "no-op, skill doesn't exist yet"）。运维被告知权限已变更，实际什么都没发生。
+`set_skill_access` 是一条 `UPDATE`，匹配 0 行，而**没有任何地方检查 `rowcount`**（`skillmaster-server/reference-python/tests/test_store.py:57` 甚至注释了 "no-op, skill doesn't exist yet"）。运维被告知权限已变更，实际什么都没发生。
 
 ---
 
@@ -166,14 +166,14 @@
 ### L4 · 文档与代码不符 · **已修复**（2026-09-26）
 
 - 根 `README.md` 曾称 importer 是 "git importer"，并描述一个 web console——两者都**没有对应代码**（`import` 接受的是本地目录，仓库里没有任何 git 相关代码，也没有 console）。**已改写为真实的包结构与状态。**
-- `pyproject.toml` 曾宣传 "tiered licensing, progressive payment"，而 [`technical-design.md`](technical-design.md) 明确本阶段**不含计费**。**当时已改为 "server-side storage, remote progressive loading"**；2026-09-26 重构把根 `pyproject.toml` 整个删除，描述随之下移到 `skill-platform-server/pyproject.toml`。
+- `pyproject.toml` 曾宣传 "tiered licensing, progressive payment"，而 [`technical-design.md`](technical-design.md) 明确本阶段**不含计费**。**当时已改为 "server-side storage, remote progressive loading"**；2026-09-26 重构把根 `pyproject.toml` 整个删除，描述随之下移到 `skillmaster-server/reference-python/pyproject.toml`。
 - **同类问题的第三处，当时审计漏了**：`skill_platform/__init__.py` 的 docstring 写着同样的旧定位。**随 2026-09-26 搬迁改写**为真实定位。
 
 ### L5 · Dockerfile 的 `/app` 归 root
 
 `.cicd/Dockerfile:7,18` · **已作废**（Dockerfile 已改写）
 
-原 Dockerfile 的 `WORKDIR /app` 归 root，容器内跑 `materialize --dest out` 这类相对路径会 `EACCES`。**该问题随 `materializer` 删除而消失**——新 Dockerfile 只把 `/opt/data/skill-platform`（数据库目录）`chown` 给运行用户，`/app` 保持只读即可。
+原 Dockerfile 的 `WORKDIR /app` 归 root，容器内跑 `materialize --dest out` 这类相对路径会 `EACCES`。**该问题随 `materializer` 删除而消失**——当时改写的 Dockerfile 只把 `/opt/data/skill-platform`（数据库目录）`chown` 给运行用户，`/app` 保持只读即可。**2026-09-27 补注**：换 Java 后该目录与 `SKILL_PLATFORM_DB` 一并删除（[ADR 0010](../../decisions/0010-storage-in-postgres.md)），现在连 `/opt/data` 都不存在了。
 
 ---
 
@@ -184,6 +184,6 @@
 - **SQL 注入**：`store.py` 的 `IN (?,?,…)` 完全由 `"?"` 字符拼成，不含未可信输入；不存在字符串插值式 SQL。
 - **CI 里 pin 的 action 版本**：`actions/checkout@v7`、`aws-actions/configure-aws-credentials@v6`、`aws-actions/amazon-ecr-login@v2`、`docker/setup-buildx-action@v4`、`docker/build-push-action@v7` **均解析到真实存在的已发布 tag**。
   > **这一条当时的结论是错的**（2026-09-26 订正）：`astral-sh/setup-uv@v10` **并不存在**——setup-uv 的浮动大版本 tag 只到 `v7`，最新 release 是 `v10.2.0`，CI 首次运行就因此失败。修法是改成 `@v10.2.0`。
-- **Dockerfile 的安装序列可跑通** —— **2026-09-26 起不再成立**。当时在干净副本里 `pip install .` 能产出可用的 `skill-platform` 入口。现在仓库根**没有** `pyproject.toml`（构建配置归各子项目所有），「在根上 `pip install .`」已经无从谈起；正确做法是进到子项目里构建，例如 `pip install ./skill-platform-server`（镜像就是这么做的），或 `uv build`（已验证能产出 wheel）。同时 `license` 改用 SPDX 字符串写法，消除 setuptools 的 `project.license` 弃用告警——那条告警 2027-02-18 后会变成错误。**2026-09-27 补注**：服务端技术栈已定为 Java（[ADR 0011](../../decisions/0011-server-and-cli-stack.md)），所以上面那套「进子项目里 `pip install`」**只对现存的 Python 基线成立**，基线被 Java 实现取代后随之作废。
+- **Dockerfile 的安装序列可跑通** —— **2026-09-26 起不再成立**。当时在干净副本里 `pip install .` 能产出可用的 `skill-platform` 入口（旧名，2026-09-27 起为 `skillmaster`）。现在仓库根**没有** `pyproject.toml`（构建配置归各子项目所有），「在根上 `pip install .`」已经无从谈起；正确做法是进到子项目里构建，例如 `pip install ./skillmaster-server`（镜像就是这么做的），或 `uv build`（已验证能产出 wheel）。同时 `license` 改用 SPDX 字符串写法，消除 setuptools 的 `project.license` 弃用告警——那条告警 2027-02-18 后会变成错误。**2026-09-27 补注**：服务端技术栈已定为 Java（[ADR 0011](../../decisions/0011-server-and-cli-stack.md)），所以上面那套「进子项目里 `pip install`」**只对现存的 Python 基线成立**，基线被 Java 实现取代后随之作废。**同日基线归档后**，那个路径本身也变成了 `pip install ./skillmaster-server/reference-python`。
 - **本次为过 lint 所做的机械改动是行为保持的**：`TYPE_CHECKING` 导入（注解得 `from __future__ import annotations` 延迟求值，且运行时的 `PermissionSnapshot` 导入仍在）、`datetime.now(UTC)`、以及测试里 `l` → `link` 的改名，均不改变行为。
-- `ruff check`、`ruff format --check`、`pytest` **当时**全部通过——那 39 项含 `test_materializer.py` 的 4 项，该文件已随模块删除；现在两个项目合计 57 项（server 35 + 文档工具 22）。
+- `ruff check`、`ruff format --check`、`pytest` **当时**全部通过——那 39 项含 `test_materializer.py` 的 4 项，该文件已随模块删除；当时两个项目合计 57 项（server 35 + 文档工具 22）。**2026-09-27 基线归档后**：那 35 项随 `reference-python/` 一起退出构建，**不再有 workflow 跑它们**；仍被 CI 覆盖的只有文档工具那 22 项。

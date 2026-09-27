@@ -1,4 +1,4 @@
-# skill-platform 系统架构设计
+# skillmaster 系统架构设计
 
 > 最后更新：2026-09-27
 > 状态：技术设计稿，尚未进入实现
@@ -292,7 +292,7 @@
 | **AS（授权服务器）** | 登录、授权、令牌签发与刷新、撤销 | 与 API 同进程（规范允许），**用 Spring Security 的 Authorization Server**——[ADR 0011](../../decisions/0011-server-and-cli-stack.md) |
 | **Blob Store** | 按 sha256 存文件字节 | PostgreSQL 的 `bytea`（单独表 + 单独表空间），藏在 `BlobStore` 接口之后——[ADR 0010](../../decisions/0010-storage-in-postgres.md) |
 | **Blob GC** | 回收无版本引用的 blob | 后台任务，**与版本变更在同一个事务里**（按引用计数） |
-| **CLI** | 登录、装网关、搜/看/取；**持有凭据** | 独立的 `skill-platform-cli/`（§2.4）；**Go**（[ADR 0011](../../decisions/0011-server-and-cli-stack.md)）。基线里没有可复用的客户端代码 |
+| **CLI** | 登录、装网关、搜/看/取；**持有凭据** | 独立的 `skillmaster-cli/`（§2.4）；**Go**（[ADR 0011](../../decisions/0011-server-and-cli-stack.md)）。基线里没有可复用的客户端代码 |
 | **MCP 适配器** | 把 `/v1/*` 包成 `skills/list` + `resources/read` | P2，能力协商 |
 
 **起步全部可以跑在一个进程 + 一个 PostgreSQL 上**，不要过早拆服务。**PostgreSQL 是本项目唯一的状态存储**——元数据、权限、审计与文件字节都在里面（[ADR 0010](../../decisions/0010-storage-in-postgres.md)）。
@@ -325,9 +325,9 @@ agent 依 skill 指示完成任务
 
 | 路径 | 是什么 |
 |---|---|
-| `skill-platform-server/` | API + AS + Blob Store + GC，**同一个进程**（§2.2 的表）。**Java / Spring Boot**（[ADR 0011](../../decisions/0011-server-and-cli-stack.md)），自带构建配置、`Dockerfile` 与 `tests/`。它的 CI 是仓库根的 `.github/workflows/server.yml`——workflow 只能放在仓库根，**不能放进子项目目录**。目录里现存的 Python 基线已降级为**设计参考**，见第 6 章 |
-| `skill-platform-cli/` | CLI（§4.6 的两组子命令）。**技术栈是 Go**（[ADR 0011](../../decisions/0011-server-and-cli-stack.md)）；写出代码之前，目录里仍只有一份说明 |
-| `gateway/skill-platform/` | 网关 skill 的源（§5）。**发布时用的就是它这个目录** |
+| `skillmaster-server/` | API + AS + Blob Store + GC，**同一个进程**（§2.2 的表）。**Java 25（LTS）/ Spring Boot 4**（[ADR 0011](../../decisions/0011-server-and-cli-stack.md)）：`pom.xml` + `src/main/java/com/skillmasterai/`，`mvnw` 随仓库走，`Dockerfile` 也在这里。它的 CI 是仓库根的 `.github/workflows/server.yml`——workflow 只能放在仓库根，**不能放进子项目目录**。目录里的 `reference-python/` 是**归档的设计参考**，不参与构建，见第 6 章 |
+| `skillmaster-cli/` | CLI（§4.6 的两组子命令）。**技术栈是 Go**（[ADR 0011](../../decisions/0011-server-and-cli-stack.md)）；写出代码之前，目录里仍只有一份说明 |
+| `gateway/skillmaster/` | 网关 skill 的源（§5）。**发布时用的就是它这个目录** |
 | `.claude/skills/docs-architecture/` | 文档约定的权威：规则（`SKILL.md`）、模板，以及 `scripts/` 里那个校验器与它的测试。跨子项目，不属于任何一个包 |
 | `.github/workflows/` | 一个 workflow 服务一个子项目，外加一个服务 `docs/` 与 `.claude/`（它们不属于任何子项目）；各自带 `paths` 过滤，改 A 不会触发 B 的 CI。**当前状态：两个 workflow 已配好、也在 CI 上实跑验证过（两个 check 均 pass），但已用 `gh workflow disable` 停用**——按产品负责人的要求，现在只把仓库当版本库用。注意 `disable` 是**远端状态、不在 git 里**：改名或新增 workflow 文件会被 GitHub 当成新 workflow 而**自动启用**（本仓库已经这样意外启用过一次） |
 
@@ -336,8 +336,8 @@ agent 依 skill 指示完成任务
 1. **仓库根不放任何单一语言的东西。** 没有根 `pyproject.toml`，也没有根 `package.json`。根上只留跨子项目的内容：`docs/`、`gateway/`、`.github/`、`.claude/`，以及各子项目自己的目录。每个子项目的工具链配置在**它自己的目录里**——这正是「技术栈可以异构」与「可以单独 CI/CD」这两条要求的落点。
    - `.claude/skills/docs-architecture/scripts/` 里确实有一个 Python 小项目，但它**不是子项目**，而是跨子项目的仓库工具的宿主：把它的配置放进那个 skill 目录，正是为了**不在仓库根放语言配置**。校验器与它的测试同处一目录，ruff 因此就近找到规则集，不必传 `--config`。
 2. **不为可能出现的子项目预留目录**（不用 `packages/*`、`apps/*`）。现在有几个就摆几个；真要多一个，加一个目录、加一个 workflow 即可，已有子项目一个字都不用动。同理，不预先造 `cli.yml`：CLI 的技术栈虽已定（Go，[ADR 0011](../../decisions/0011-server-and-cli-stack.md)），但在有代码之前，一个跑不出任何东西的 workflow 只会假装绿。
-3. **`gateway/` 是跨子项目的，所以它不放在任何子项目目录里。** 服务端要它（`GET /gateway/SKILL.md`、发布到 well-known），CLI 也要它（`setup` 装它）。它同时是一个 skill 目录——标准要求目录名等于 `name`（§1.1），所以是 `gateway/skill-platform/`；直接放在仓库根下会得到 `skill-platform/skill-platform/`。名字用 `gateway` 而不是 `skills`：复数会暗示这里有一堆 skill，而实际永远只有 §4.5 那一个。
-4. **Dockerfile 跟着它构建的东西走。** 服务端镜像的定义在 `skill-platform-server/Dockerfile`，不在仓库根的 `.cicd/`。构建上下文**仍是仓库根**（镜像要一并带上 `gateway/`），由 `.dockerignore` 收敛；服务端的 workflow 因此也在 `gateway/**` 变化时触发。
+3. **`gateway/` 是跨子项目的，所以它不放在任何子项目目录里。** 服务端要它（`GET /gateway/SKILL.md`、发布到 well-known），CLI 也要它（`setup` 装它）。它同时是一个 skill 目录——标准要求目录名等于 `name`（§1.1），所以是 `gateway/skillmaster/`；直接放在仓库根下会得到 `skillmaster/skillmaster/`。名字用 `gateway` 而不是 `skills`：复数会暗示这里有一堆 skill，而实际永远只有 §4.5 那一个。
+4. **Dockerfile 跟着它构建的东西走。** 服务端镜像的定义在 `skillmaster-server/Dockerfile`，不在仓库根的 `.cicd/`。构建上下文**仍是仓库根**（镜像要一并带上 `gateway/`），由 `.dockerignore` 收敛；服务端的 workflow 因此也在 `gateway/**` 变化时触发。
 
 ---
 
@@ -465,7 +465,7 @@ CREATE TABLE namespace_member (
 
 **注册时自动为每个用户建一个个人命名空间**（`slug = handle`）。这样 `(namespace_id, name)` 唯一这一个约束**同时覆盖了「个人内不重名」与将来的「团队内不重名」**——正是你提的 `user_id + skill_name` 的意图，且将来升级成团队命名空间不需要迁移。
 
-> **保留 slug**：网关 skill 发布在一个**保留命名空间**里（如 `skill-platform`，见 §4.5），而 `namespace.slug` 有 UNIQUE 约束。所以注册时**必须拒绝**落在保留名单里的 `handle`——否则该用户注册会直接撞 UNIQUE 失败，或更糟：遮蔽网关的发布路径。
+> **保留 slug**：网关 skill 发布在一个**保留命名空间**里（如 `skillmaster`，见 §4.5），而 `namespace.slug` 有 UNIQUE 约束。所以注册时**必须拒绝**落在保留名单里的 `handle`——否则该用户注册会直接撞 UNIQUE 失败，或更糟：遮蔽网关的发布路径。
 
 ### 3.3 Skill 与版本
 
@@ -705,23 +705,23 @@ skill 的内容会被客户端取走、在客户端环境里使用，事后追�
 |---|---|---|
 | `GET` | `/.well-known/agent-skills/index.json` | V2，**只含网关 skill 一个 entry** |
 | `GET` | `/.well-known/skills/index.json` | V1，同上（旧版 CLI 用） |
-| `GET` | `/.well-known/gateway/skill-platform/<relpath>` | V1 的逐文件拉取 |
+| `GET` | `/.well-known/gateway/skillmaster/<relpath>` | V1 的逐文件拉取 |
 | `GET` | `/gateway/SKILL.md` | 网关 skill 正文（CLI `setup` 用） |
 
-**未发布时必须返回真 404**（见 1.5 的坑）。**网关 skill 发布在一个保留命名空间里**（如 `skill-platform`），它本身也是一个普通 skill，有版本、有 digest。
+**未发布时必须返回真 404**（见 1.5 的坑）。**网关 skill 发布在一个保留命名空间里**（如 `skillmaster`），它本身也是一个普通 skill，有版本、有 digest。
 
 ### 4.6 CLI 命令
 
 | 命令 | 作用 |
 |---|---|
-| `skill-platform login` | loopback PKCE 登录，令牌存 keychain |
-| `skill-platform login --client-credentials` | 无人值守（CI），用 Client Credentials |
-| `skill-platform logout` | 撤销并清除本地令牌 |
-| `skill-platform setup` | 检测本机 agent → 装网关 skill → 软链 |
-| `skill-platform search <q>` | 调 `/v1/skills` |
-| `skill-platform show <id>` | 调 `/v1/skills/{id}` |
-| `skill-platform get <id> [relpath]` | 取正文或单个文件，落到临时目录 |
-| `skill-platform publish <path>` | 管理端：发布 |
+| `skillmaster login` | loopback PKCE 登录，令牌存 keychain |
+| `skillmaster login --client-credentials` | 无人值守（CI），用 Client Credentials |
+| `skillmaster logout` | 撤销并清除本地令牌 |
+| `skillmaster setup` | 检测本机 agent → 装网关 skill → 软链 |
+| `skillmaster search <q>` | 调 `/v1/skills` |
+| `skillmaster show <id>` | 调 `/v1/skills/{id}` |
+| `skillmaster get <id> [relpath]` | 取正文或单个文件，落到临时目录 |
+| `skillmaster publish <path>` | 管理端：发布 |
 
 **两个设计点**：
 
@@ -736,11 +736,11 @@ skill 的内容会被客户端取走、在客户端环境里使用，事后追�
 
 一个普通 skill，但有特殊职责：**它是本地唯一常驻的东西，也是协议本身。**
 
-**源文件在 [`gateway/skill-platform/SKILL.md`](../../../gateway/skill-platform/SKILL.md)，那份文件是权威**——本文不抄它的正文（§2.3 的铁律：一个事实只有一个权威位置；抄一份就一定会漂移）。这里只记设计层面必须成立的三件事：
+**源文件在 [`gateway/skillmaster/SKILL.md`](../../../gateway/skillmaster/SKILL.md)，那份文件是权威**——本文不抄它的正文（§2.3 的铁律：一个事实只有一个权威位置；抄一份就一定会漂移）。这里只记设计层面必须成立的三件事：
 
 | 字段 | 必须是什么 |
 |---|---|
-| `name` | `skill-platform`。标准的 MUST 要求它等于父目录名，所以源文件落在 `gateway/skill-platform/`（§2.4） |
+| `name` | `skillmaster`。标准的 MUST 要求它等于父目录名，所以源文件落在 `gateway/skillmaster/`（§2.4） |
 | `description` | 写得**足够广**——目录不常驻，「该不该去查 skill 库」全靠这一句。见 §5.2 第 1 条 |
 | `metadata.platform_api_version` | 协议版本号；CLI `setup` 据此判断本地网关是否过期。见 §5.2 第 3 条 |
 
@@ -748,7 +748,7 @@ skill 的内容会被客户端取走、在客户端环境里使用，事后追�
 
 1. **`description` 决定了整个发现体验。** 目录不常驻，所以"该不该去查 skill 库"全靠这句。它必须写得**广**（覆盖多类任务），而不是窄（只描述某一个场景）。这是全项目最需要打磨的一段文字。
 
-2. **正文必须短且强指令。** 它每次被触发都会进上下文并**在整个会话常驻**。冗长的协议说明会持续占用预算。[那份正文](../../../gateway/skill-platform/SKILL.md)大约 200 tokens，是合适的量级。
+2. **正文必须短且强指令。** 它每次被触发都会进上下文并**在整个会话常驻**。冗长的协议说明会持续占用预算。[那份正文](../../../gateway/skillmaster/SKILL.md)大约 200 tokens，是合适的量级。
 
 3. **它必须能更新。** 网关正文就是协议——如果 API 变了而用户本地的网关是旧的，agent 会按旧协议调用。所以：
    - 网关 frontmatter 里带 `metadata.platform_api_version`
@@ -774,10 +774,10 @@ skill 的内容会被客户端取走、在客户端环境里使用，事后追�
 | `store.permissions_version` + `permissions.PermissionCache` | **保留这套机制，重写实现**——"版本计数器失效 + TTL 兜底 + 失败 fail-closed"正好是搜索索引缓存需要的 |
 | `materializer.py` | **已删除**（2026-09-26），不重建。本项目不再把 skill 落到本地，[ADR 0001](../../decisions/0001-server-authoritative.md) 早已判它作废。归档/导出若将来真需要，从 git 历史取回改写 |
 | `permissions.py` | **收窄后再重建**：不做门控，只做**可见性**（public/unlisted/private）；命名空间成员判定推迟（v1 只有所有者一行）。family 匹配（`lark` 覆盖 `lark-*`）对集合型 skill 仍有用 |
-| `__main__.py` | **已删除**，不重建。它的子命令全属旧模型。新的两组子命令——客户端（login/setup/search/show/get）与管理端（publish/versions/…）——**在 `skill-platform-cli/` 里用 Go 另写**（[ADR 0011](../../decisions/0011-server-and-cli-stack.md)、§4.6） |
+| `__main__.py` | **已删除**，不重建。它的子命令全属旧模型。新的两组子命令——客户端（login/setup/search/show/get）与管理端（publish/versions/…）——**在 `skillmaster-cli/` 里用 Go 另写**（[ADR 0011](../../decisions/0011-server-and-cli-stack.md)、§4.6） |
 | `schema.py` | **重建**：加表；`meta` + **schema_version 的校验与迁移需要新建**——基线只写入版本号、从不与常量比对，并不存在可「保留」的迁移机制（证据见 [`known-issues.md`](known-issues.md) L2） |
 
-**Python 基线暂不删除**，留到 Java 覆盖同一片语义之后再删：它是 `_collect_files` 的行为、权限族匹配这些边角语义的**唯一可执行记录**——本文是散文，不是可运行的。
+**Python 基线暂不删除**，已归档到 `skillmaster-server/reference-python/`（不参与构建、不跑测试），留到 Java 覆盖同一片语义之后再删：它是 `_collect_files` 的行为、权限族匹配这些边角语义的**唯一可执行记录**——本文是散文，不是可运行的。
 
 **要新增的核心能力**：完整 YAML 解析器、严格校验器、digest 计算、blob store + GC、搜索与排序、OAuth AS、HTTP 服务、CLI 登录流程、网关 skill 的安装与更新。
 

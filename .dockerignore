@@ -8,11 +8,14 @@
 **/*.egg-info/
 **/.venv/
 **/build/
+**/target/
 .git/
 .github/
 .claude/
 docs/
-skill-platform-cli/
+skillmaster-cli/
+# The archived Python baseline is a design reference; nothing at runtime reads it.
+skillmaster-server/reference-python/
 **/tests/
 **/uv.lock
 README.md

@@ -1,4 +1,4 @@
-# skill-platform CLI
+# skillmaster CLI
 
 The client that holds credentials and fetches skills on demand. It is the only
 component that covers unattended use, and it is what installs the gateway skill.
