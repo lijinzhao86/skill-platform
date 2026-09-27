@@ -3,6 +3,7 @@
 - **状态**：已采纳
 - **日期**：2026-09-26
 - **依赖**：[ADR 0002](0002-gateway-skill-and-cli.md)、[ADR 0003](0003-api-primary.md)
+- **范围被收窄**：[ADR 0011](0011-server-and-cli-stack.md) 把「三种注册方式」分期——**v1 只做预注册**，CIMD 推到 P2，DCR 只作兼容。**本文正文不改**（ADR 不可变）。
 
 ## 背景
 

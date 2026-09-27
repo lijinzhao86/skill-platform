@@ -3,6 +3,7 @@
 - **状态**：已采纳
 - **日期**：2026-09-26
 - **依赖**：[ADR 0001](0001-server-authoritative.md)、[ADR 0002](0002-gateway-skill-and-cli.md)
+- **后续**：「后果」里那条中文分词选型（SQLite FTS5 + `trigram`）已由 [ADR 0010](0010-storage-in-postgres.md) 取代（实测不可行）。**正文四段保持原样**——改写它就丢掉了「当时是这么想的」，这是 ADR 不可变的代价。
 
 ## 背景
 

@@ -1,6 +1,6 @@
 # v1-hosting · 产品需求
 
-> **最后更新**：2026-09-26
+> **最后更新**：2026-09-27
 > **状态**：需求已确认，**尚未实现**
 > **所属版本**：[`README.md`](README.md)
 
@@ -59,7 +59,7 @@
 | 3 | 远程读详情：返回 L1 + **完整文件清单，零内容** | `GET /v1/skills/{id}` |
 | 4 | 远程读正文（L2）与单个文件（L3） | `GET /v1/skills/{id}/body`、`/files/{relpath}` |
 | 5 | 网关 skill + 自研 CLI（`setup` / `login` / `search` / `show` / `get`） | 一份网关 skill + 一个 CLI |
-| 6 | 自建登录与令牌签发（OAuth 2.1 AS，支持 CIMD + DCR + 预注册） | 登录页 + 令牌接口 |
+| 6 | 自建登录与令牌签发（OAuth 2.1 AS，**v1 的注册方式只做预注册**——客户端只有我们自己的 CLI；CIMD 到 P2 才需要，DCR 不启用，见 [ADR 0011](../../decisions/0011-server-and-cli-stack.md)） | 登录页 + 令牌接口 |
 
 **渐进加载由服务端在接口层强制**：搜索只给 L1、正文接口只给 L2、文件接口只给 L3。不是靠模型自觉。
 
@@ -104,8 +104,8 @@
 
 ## 依赖与前置
 
-- **内部前提**：架构取舍已定，见 [`decisions/`](../../decisions/) 的九条 ADR（服务端权威 / 网关 skill + CLI / API 主契约 / 不透明 id / 内容寻址 / 服务端检索 / 自建 AS / 不做脚本执行 / 砍掉 `l2#n`）。
+- **内部前提**：架构取舍已定，见 [`decisions/`](../../decisions/) 的十一条 ADR（服务端权威 / 网关 skill + CLI / API 主契约 / 不透明 id / 内容寻址 / 服务端检索 / 自建 AS / 不做脚本执行 / 砍掉 `l2#n` / 存储全部落在 PostgreSQL / 技术栈 Java + Spring 与 Go CLI）。
 - **外部依赖**：
-  - GitHub 仓库 `lijinzhao86/skill-platform`（public）与 CI 密钥 —— CI 已配好，**建仓库/推代码/配密钥这些外部步骤尚未执行**
-  - ECR 仓库 `skill-platform`（CI 的镜像推送目标）
+  - GitHub 仓库 `lijinzhao86/skill-platform`（public）—— 仓库已建、代码已推、`main` 已开强制 PR；CI 配好后实跑通过一次，现**有意停用**（见 [`technical-design.md`](technical-design.md) §2.4）
+  - **部署平台是阿里云**（2026-09-27 确认）：原先按 AWS / EKS / ECR 写的路线**作废**。服务端跑在**单台 ECS** 上（[`ADR 0011`](../../decisions/0011-server-and-cli-stack.md)；多副本是将来），数据库是**托管 RDS PostgreSQL、规格已定**（[`ADR 0010`](../../decisions/0010-storage-in-postgres.md) 决定 3）。**待定的只是镜像仓库等登记细节**
 - **排除了什么前置**：支付通道、实名合规、内容审核——它们是把公开市场做起来的前置，这一版不含收费与公开市场，因此**都不是本版的前置**（这也是先做私有托管的理由之一，见 [`target/blueprint.md`](../../target/blueprint.md)）。
