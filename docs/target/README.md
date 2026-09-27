@@ -51,6 +51,7 @@
 | # | 事项 | 位置 | 说明 |
 |---|---|---|---|
 | 13 | 两份文档自带版本号（`design.md` **v0.1**、`blueprint.md` **v0.2**，均标 2026-09-20）与「产品规划稿」状态 | 各自文件头 | 与仓库约定「**版本由文件夹承担**、文件内部不写版本号」冲突，读者容易误以为它们属于 `versions/` 的某版 |
+| 14 | **产品名**：正文通篇用旧名 `skill-platform`，含 `blueprint.md` 的标题 `:1`、`design.md` 全篇，以及 `:19` 那段**对外发布文案**（「AI agent 技能托管与分享平台「skill-platform」正式上线」） | `blueprint.md`（50 处）、`design.md`（8 处）、本文件 `:37`（引 `blueprint.md:96` 的原话） | **产品名已于 2026-09-27 改为 `SkillMaster`**（域名 `skillmasterai.com`）。正文按上面的§维护约定**保持旧名**，不作为改名遗漏——读到 `skill-platform` 时按 `SkillMaster` 理解 |
 
 ---
 

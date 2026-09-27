@@ -2,7 +2,7 @@
 # plus its tests. Never built or installed — only run in place, which is why it
 # declares no build system.
 [project]
-name = "skill-platform-docs-check"
+name = "skillmaster-docs-check"
 version = "0.0.0"
 description = "Documentation validator and its tests, for the docs-architecture skill"
 requires-python = ">=3.11"
@@ -24,7 +24,7 @@ target-version = "py311"
 line-length = 88
 
 [tool.ruff.lint]
-# Pinned deliberately, and mirrored in skill-platform-server: ruff 0.16 changed its
+# Pinned deliberately, and mirrored in skillmaster-server/reference-python: ruff 0.16 changed its
 # default rule set, so leaving `select` unset would silently change what this
 # project checks (the validator gains EXE001/FURB167-style findings it does not
 # have under this policy).

@@ -1,6 +1,6 @@
 ---
 name: docs-architecture
-description: 本仓库（skill-platform）文档架构与版本化的强制约定——新文档属于哪个轴、大版本与小版本怎么开目录、每个版本四份文档各自必须回答什么、迭代记录怎么写、什么时候必须开 ADR。TRIGGER on ANY task that creates, edits, moves, restructures, reviews or audits anything under docs/, that starts or plans a new version or a minor iteration, that writes a PRD / technical design / test plan / ADR, or that asks where a new document belongs. MUST be invoked before creating or moving any file under docs/.
+description: 本仓库（skillmaster）文档架构与版本化的强制约定——新文档属于哪个轴、大版本与小版本怎么开目录、每个版本四份文档各自必须回答什么、迭代记录怎么写、什么时候必须开 ADR。TRIGGER on ANY task that creates, edits, moves, restructures, reviews or audits anything under docs/, that starts or plans a new version or a minor iteration, that writes a PRD / technical design / test plan / ADR, or that asks where a new document belongs. MUST be invoked before creating or moving any file under docs/.
 ---
 
 # 文档架构与版本化约定

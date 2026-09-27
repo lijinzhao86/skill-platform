@@ -3,6 +3,8 @@
 - **状态**：已采纳
 - **日期**：2026-09-27
 - **依赖**：[ADR 0002](0002-gateway-skill-and-cli.md)、[ADR 0007](0007-self-built-oauth-as.md)、[ADR 0010](0010-storage-in-postgres.md)
+- **后续**：§后果 里留白的实现细节已定—— **Java 25（LTS）+ Maven**，包名 **`com.skillmasterai`**（取自自有域名 `skillmasterai.com`），`mvnw` 随仓库走（CI、本机、镜像三处版本一致）。Python 基线**已归档**到 `skillmaster-server/reference-python/`，仍是设计参考、仍不删。
+- **同日后产品名为 `SkillMaster`**，仓库、目录与网关 skill 随之改名：`skillmaster-server/`、`skillmaster-cli/`、`gateway/skillmaster/`（skill 的 `name` 也改成 `skillmaster`）。**因此上面 §后果 正文里指旧名的那一处路径已过期**——这是 ADR 不可变的既定代价。**正文四段保持原样**。
 
 ## 背景
 

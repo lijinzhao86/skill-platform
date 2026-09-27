@@ -106,6 +106,6 @@
 
 - **内部前提**：架构取舍已定，见 [`decisions/`](../../decisions/) 的十一条 ADR（服务端权威 / 网关 skill + CLI / API 主契约 / 不透明 id / 内容寻址 / 服务端检索 / 自建 AS / 不做脚本执行 / 砍掉 `l2#n` / 存储全部落在 PostgreSQL / 技术栈 Java + Spring 与 Go CLI）。
 - **外部依赖**：
-  - GitHub 仓库 `lijinzhao86/skill-platform`（public）—— 仓库已建、代码已推、`main` 已开强制 PR；CI 配好后实跑通过一次，现**有意停用**（见 [`technical-design.md`](technical-design.md) §2.4）
+  - GitHub 仓库 `lijinzhao86/skillmaster`（public）—— 仓库已建、代码已推、`main` 已开强制 PR；CI 配好后实跑通过一次，现**有意停用**（见 [`technical-design.md`](technical-design.md) §2.4）
   - **部署平台是阿里云**（2026-09-27 确认）：原先按 AWS / EKS / ECR 写的路线**作废**。服务端跑在**单台 ECS** 上（[`ADR 0011`](../../decisions/0011-server-and-cli-stack.md)；多副本是将来），数据库是**托管 RDS PostgreSQL、规格已定**（[`ADR 0010`](../../decisions/0010-storage-in-postgres.md) 决定 3）。**待定的只是镜像仓库等登记细节**
 - **排除了什么前置**：支付通道、实名合规、内容审核——它们是把公开市场做起来的前置，这一版不含收费与公开市场，因此**都不是本版的前置**（这也是先做私有托管的理由之一，见 [`target/blueprint.md`](../../target/blueprint.md)）。
