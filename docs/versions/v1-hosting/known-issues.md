@@ -8,6 +8,8 @@
 >
 > **路径约定**：下表的 `skill_platform_server/<module>.py` 指 `skill-platform-server/src/skill_platform_server/<module>.py`（布局见 [`technical-design.md`](technical-design.md) §2.4）。标 **已作废** 的条目**保留搬迁前的原路径**，便于回 git 历史对照。
 >
+> **2026-09-27 技术栈定为 Java 之后**：下表指向 Python 模块的 **8 条**锚点**降为历史记录**——那些模块已从「搬过来复用」改定位为「**可执行的设计参考**」，Java 会重写而非搬迁（见 [`technical-design.md`](technical-design.md) 第 6 章与 [ADR 0011](../../decisions/0011-server-and-cli-stack.md)）。**条数与分布不变**（没有删除任何代码），变的是这些锚点的用途：现在只用于回 git 历史对照。
+>
 > **分布的口径**：本文件开头那一行是**唯一权威**。更早的 [`iterations/0001`](iterations/0001-doc-audit-corrections.md) 里也复述过一组数字（9 已复现 / 1 两半混合 / …），那是 2026-09-26 重构**之前**的口径——迭代记录只增不改，所以那组数字留在原处，以本文件为准。
 
 ## 状态标注
@@ -182,6 +184,6 @@
 - **SQL 注入**：`store.py` 的 `IN (?,?,…)` 完全由 `"?"` 字符拼成，不含未可信输入；不存在字符串插值式 SQL。
 - **CI 里 pin 的 action 版本**：`actions/checkout@v7`、`aws-actions/configure-aws-credentials@v6`、`aws-actions/amazon-ecr-login@v2`、`docker/setup-buildx-action@v4`、`docker/build-push-action@v7` **均解析到真实存在的已发布 tag**。
   > **这一条当时的结论是错的**（2026-09-26 订正）：`astral-sh/setup-uv@v10` **并不存在**——setup-uv 的浮动大版本 tag 只到 `v7`，最新 release 是 `v10.2.0`，CI 首次运行就因此失败。修法是改成 `@v10.2.0`。
-- **Dockerfile 的安装序列可跑通** —— **2026-09-26 起不再成立**。当时在干净副本里 `pip install .` 能产出可用的 `skill-platform` 入口。现在仓库根**没有** `pyproject.toml`（构建配置归各子项目所有），「在根上 `pip install .`」已经无从谈起；正确做法是进到子项目里构建，例如 `pip install ./skill-platform-server`（镜像就是这么做的），或 `uv build`（已验证能产出 wheel）。同时 `license` 改用 SPDX 字符串写法，消除 setuptools 的 `project.license` 弃用告警——那条告警 2027-02-18 后会变成错误。
+- **Dockerfile 的安装序列可跑通** —— **2026-09-26 起不再成立**。当时在干净副本里 `pip install .` 能产出可用的 `skill-platform` 入口。现在仓库根**没有** `pyproject.toml`（构建配置归各子项目所有），「在根上 `pip install .`」已经无从谈起；正确做法是进到子项目里构建，例如 `pip install ./skill-platform-server`（镜像就是这么做的），或 `uv build`（已验证能产出 wheel）。同时 `license` 改用 SPDX 字符串写法，消除 setuptools 的 `project.license` 弃用告警——那条告警 2027-02-18 后会变成错误。**2026-09-27 补注**：服务端技术栈已定为 Java（[ADR 0011](../../decisions/0011-server-and-cli-stack.md)），所以上面那套「进子项目里 `pip install`」**只对现存的 Python 基线成立**，基线被 Java 实现取代后随之作废。
 - **本次为过 lint 所做的机械改动是行为保持的**：`TYPE_CHECKING` 导入（注解得 `from __future__ import annotations` 延迟求值，且运行时的 `PermissionSnapshot` 导入仍在）、`datetime.now(UTC)`、以及测试里 `l` → `link` 的改名，均不改变行为。
 - `ruff check`、`ruff format --check`、`pytest` **当时**全部通过——那 39 项含 `test_materializer.py` 的 4 项，该文件已随模块删除；现在两个项目合计 57 项（server 35 + 文档工具 22）。

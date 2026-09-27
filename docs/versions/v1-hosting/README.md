@@ -1,6 +1,6 @@
 # v1-hosting · skill 托管与远程加载
 
-> **最后更新**：2026-09-26
+> **最后更新**：2026-09-27
 > **状态**：进行中（设计已定稿，**尚未实现**）
 > **含收费**：否
 
@@ -57,7 +57,7 @@ skill 全部活在服务端，**本地不留 skill 副本**；客户端侧只装
 
 1. **网关 skill 的 `description` 怎么写**——目录不常驻，这句决定发现体验的上限，且没有数据可依。
 2. **检索与排序的权重**——在这个模型下排序**就是**产品核心（[ADR 0006](../../decisions/0006-search-server-side.md)）。
-3. **中文分词选型**——计划 SQLite FTS5 + `trigram`，需实测目标构建是否带该 tokenizer。
+3. **中文检索的索引形态**——原计划（SQLite FTS5 + `trigram`）已实测不可行，方向转为 PostgreSQL 的 `pg_bigm`，**待验证**（[ADR 0010](../../decisions/0010-storage-in-postgres.md)）。
 
 ## 下一版可能是什么
 

@@ -21,6 +21,8 @@
 | [0007](0007-self-built-oauth-as.md) | 自建 OAuth 2.1 AS，支持三种客户端注册方式 | 已采纳 | 2026-09-26 |
 | [0008](0008-no-script-execution.md) | P0 不做脚本执行 | 已采纳 | 2026-09-26 |
 | [0009](0009-drop-l2n.md) | 砍掉 `l2#n`，付费边界只落在层与层之间 | 已采纳 | 2026-09-26 |
+| [0010](0010-storage-in-postgres.md) | 存储全部落在 PostgreSQL（含字节），不引对象存储或文件系统 | 已采纳 | 2026-09-27 |
+| [0011](0011-server-and-cli-stack.md) | 技术栈：服务端 Java + Spring，CLI 用 Go；v1 的 AS 只做预注册 | 已采纳 | 2026-09-27 |
 
 ## 状态取值
 

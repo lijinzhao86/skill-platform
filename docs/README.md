@@ -22,7 +22,7 @@ docs/
 │   └── design.md             完整形态的模块、场景、页面、概念模型
 ├── decisions/
 │   ├── README.md             ADR 索引
-│   └── 0001..0009-*.md       编号决策记录
+│   └── 0001..0011-*.md       编号决策记录
 └── versions/
     └── v1-hosting/
         ├── README.md             版本记录主页（薄）：状态 + 链接 + 五问摘要
@@ -69,7 +69,7 @@ python3 .claude/skills/docs-architecture/scripts/check_docs.py
 
 1. [`target/README.md`](target/README.md) —— ⚠️ **先读这份差异清单**。
 2. [`target/blueprint.md`](target/blueprint.md) —— 为什么做这个产品、为谁做。**注意**：目标态文档写于 2026-09-20，早于当前的架构决策，照着实现会做错——差异见上一条。
-3. [`decisions/`](decisions/) —— 已经定下来的关键取舍（九条，每条一页）。
+3. [`decisions/`](decisions/) —— 已经定下来的关键取舍（十一条，每条一页）。
 4. [`versions/v1-hosting/`](versions/v1-hosting/) —— **当前要做的这一版**具体是什么。
 5. 需要背景时看 [`research/competitors.md`](research/competitors.md) —— 竞品都怎么做的、空在哪。
 

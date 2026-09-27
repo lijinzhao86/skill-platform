@@ -1,6 +1,6 @@
 # skill-platform 系统架构设计
 
-> 最后更新：2026-09-26
+> 最后更新：2026-09-27
 > 状态：技术设计稿，尚未进入实现
 > 所属版本：[v1-hosting](README.md)——版本由文件夹承担，本文不再自带版本号
 > **定位：skill 的托管与远程加载服务。** skill 全部活在服务端；用户通过网关 skill 与 CLI 远程搜索、读取、使用 skill，**本地不留 skill 副本**。
@@ -68,7 +68,7 @@
 | 客户端 | **自研 CLI**，持有凭据；普适（交互式 loopback PKCE + 无人值守 Client Credentials） |
 | 网关粒度 | **一个通用网关 skill** |
 | 搜索排序 | **全部在服务端**（目录不常驻，服务端就是索引） |
-| 鉴权 | **自建登录 + 自建令牌签发**（OAuth 2.1 AS，支持 CIMD + DCR + 预注册） |
+| 鉴权 | **自建登录 + 自建令牌签发**（OAuth 2.1 AS）。终局要支持 CIMD + DCR + 预注册；**v1 只做预注册**，CIMD 到 P2、DCR 不启用（[ADR 0011](../../decisions/0011-server-and-cli-stack.md)、§7） |
 | skill 主键 | **不透明的 `id`**，永不变；`name` 是属性，唯一性约束在 `(namespace_id, name)` |
 | 脚本执行 | P0 不做 |
 
@@ -258,7 +258,11 @@
 
 > **对方案的直接意义**：**CLI 不是 MCP 的退路，它是唯一覆盖无人值守场景的客户端。** 分工是——交互式用户可用 MCP OAuth（体验好），**无人值守只有 CLI 能覆盖**。
 
-**一个实现上的坑：CIMD 支持很薄。** 已确认发布 CIMD 的只有 Claude Code、VS Code、ChatGPT；Cursor / Gemini CLI / Codex 未确认（Gemini CLI 文档压根没提，明确说走 DCR）；且 2025-12 时 Auth0、Okta、Cognito、Entra、Google Identity **都还没实现 CIMD**。→ **我们的 AS 必须同时支持 CIMD + DCR + 预注册三种注册方式**，否则会卡死一批客户端。
+**一个实现上的坑：CIMD 支持很薄。** 已确认发布 CIMD 的只有 Claude Code、VS Code、ChatGPT；Cursor / Gemini CLI / Codex 未确认（Gemini CLI 文档压根没提，明确说走 DCR）；且 2025-12 时 Auth0、Okta、Cognito、Entra、Google Identity **都还没实现 CIMD**。→ 所以 AS 最终**必须同时支持三种**，只做一种会卡死一批客户端。
+
+> **2026-09-27 补充**：**MCP 规范 2026-07-28 已把 DCR 标为 deprecated**，原话 *"New implementations should use Client ID Metadata Documents instead."*；2025-11-25 那版是 CIMD `SHOULD` / DCR `MAY` / 预注册 `SHOULD`，RFC 8707 `resource` 是 `MUST`。**方向已经明确：CIMD 是主路径**。而 CIMD 本身**仍只是 Internet-Draft**（`draft-ietf-oauth-client-id-metadata-document-02`）——这也正是现成产品都不支持它的原因。
+>
+> **这不改变「三种都要」的最终要求，改变的是「什么时候要」**：预注册 v1 就要，CIMD 到 P2 才要，DCR 只作兼容。分期见 §7，依据见 [ADR 0011](../../decisions/0011-server-and-cli-stack.md)。
 
 **信心说明**：本节部分依赖社区维护的矩阵与文档镜像（Codex 官方文档与部分厂商文档抓取 403，只能靠二手）。**「交互式覆盖广、M2M 无人支持」这两个结论稳；「每个客户端的具体细节」按需再核。**
 
@@ -284,14 +288,14 @@
 
 | 组件 | 职责 | 起步形态 |
 |---|---|---|
-| **API（资源服务器）** | 搜索、详情、正文、文件；校验令牌、按 subject 过滤 | FastAPI + SQLite |
-| **AS（授权服务器）** | 登录、授权、令牌签发与刷新、撤销 | 与 API 同进程（规范允许），用 `authlib` |
-| **Blob Store** | 按 sha256 存文件字节 | 本地目录 |
-| **Blob GC** | 回收无版本引用的 blob | 后台任务 |
-| **CLI** | 登录、装网关、搜/看/取；**持有凭据** | 独立的 `skill-platform-cli/`（§2.4）；**技术栈未定**，基线里也没有可复用的客户端代码 |
+| **API（资源服务器）** | 搜索、详情、正文、文件；校验令牌、按 subject 过滤 | Java + Spring Boot 4 / Spring Security 7 + PostgreSQL |
+| **AS（授权服务器）** | 登录、授权、令牌签发与刷新、撤销 | 与 API 同进程（规范允许），**用 Spring Security 的 Authorization Server**——[ADR 0011](../../decisions/0011-server-and-cli-stack.md) |
+| **Blob Store** | 按 sha256 存文件字节 | PostgreSQL 的 `bytea`（单独表 + 单独表空间），藏在 `BlobStore` 接口之后——[ADR 0010](../../decisions/0010-storage-in-postgres.md) |
+| **Blob GC** | 回收无版本引用的 blob | 后台任务，**与版本变更在同一个事务里**（按引用计数） |
+| **CLI** | 登录、装网关、搜/看/取；**持有凭据** | 独立的 `skill-platform-cli/`（§2.4）；**Go**（[ADR 0011](../../decisions/0011-server-and-cli-stack.md)）。基线里没有可复用的客户端代码 |
 | **MCP 适配器** | 把 `/v1/*` 包成 `skills/list` + `resources/read` | P2，能力协商 |
 
-**起步全部可以跑在一个进程 + SQLite 上**，不要过早拆服务。
+**起步全部可以跑在一个进程 + 一个 PostgreSQL 上**，不要过早拆服务。**PostgreSQL 是本项目唯一的状态存储**——元数据、权限、审计与文件字节都在里面（[ADR 0010](../../decisions/0010-storage-in-postgres.md)）。
 
 ### 2.3 一次读的完整路径
 
@@ -321,8 +325,8 @@ agent 依 skill 指示完成任务
 
 | 路径 | 是什么 |
 |---|---|
-| `skill-platform-server/` | API + AS + Blob Store + GC，**同一个进程**（§2.2 的表）。自带 `pyproject.toml` / `Dockerfile` / `uv.lock` / `tests/`；Python 包在 `src/skill_platform_server/`。它的 CI 是仓库根的 `.github/workflows/server.yml`——workflow 只能放在仓库根，**不能放进子项目目录** |
-| `skill-platform-cli/` | CLI（§4.6 的两组子命令）。**技术栈尚未确定**，所以目录里暂时只有一份说明，没有任何构建配置 |
+| `skill-platform-server/` | API + AS + Blob Store + GC，**同一个进程**（§2.2 的表）。**Java / Spring Boot**（[ADR 0011](../../decisions/0011-server-and-cli-stack.md)），自带构建配置、`Dockerfile` 与 `tests/`。它的 CI 是仓库根的 `.github/workflows/server.yml`——workflow 只能放在仓库根，**不能放进子项目目录**。目录里现存的 Python 基线已降级为**设计参考**，见第 6 章 |
+| `skill-platform-cli/` | CLI（§4.6 的两组子命令）。**技术栈是 Go**（[ADR 0011](../../decisions/0011-server-and-cli-stack.md)）；写出代码之前，目录里仍只有一份说明 |
 | `gateway/skill-platform/` | 网关 skill 的源（§5）。**发布时用的就是它这个目录** |
 | `.claude/skills/docs-architecture/` | 文档约定的权威：规则（`SKILL.md`）、模板，以及 `scripts/` 里那个校验器与它的测试。跨子项目，不属于任何一个包 |
 | `.github/workflows/` | 一个 workflow 服务一个子项目，外加一个服务 `docs/` 与 `.claude/`（它们不属于任何子项目）；各自带 `paths` 过滤，改 A 不会触发 B 的 CI。**当前状态：两个 workflow 已配好、也在 CI 上实跑验证过（两个 check 均 pass），但已用 `gh workflow disable` 停用**——按产品负责人的要求，现在只把仓库当版本库用。注意 `disable` 是**远端状态、不在 git 里**：改名或新增 workflow 文件会被 GitHub 当成新 workflow 而**自动启用**（本仓库已经这样意外启用过一次） |
@@ -331,7 +335,7 @@ agent 依 skill 指示完成任务
 
 1. **仓库根不放任何单一语言的东西。** 没有根 `pyproject.toml`，也没有根 `package.json`。根上只留跨子项目的内容：`docs/`、`gateway/`、`.github/`、`.claude/`，以及各子项目自己的目录。每个子项目的工具链配置在**它自己的目录里**——这正是「技术栈可以异构」与「可以单独 CI/CD」这两条要求的落点。
    - `.claude/skills/docs-architecture/scripts/` 里确实有一个 Python 小项目，但它**不是子项目**，而是跨子项目的仓库工具的宿主：把它的配置放进那个 skill 目录，正是为了**不在仓库根放语言配置**。校验器与它的测试同处一目录，ruff 因此就近找到规则集，不必传 `--config`。
-2. **不为可能出现的子项目预留目录**（不用 `packages/*`、`apps/*`）。现在有几个就摆几个；真要多一个，加一个目录、加一个 workflow 即可，已有子项目一个字都不用动。同理，不预先造 `cli.yml`：CLI 还没有技术栈，一个跑不出任何东西的 workflow 只会假装绿。
+2. **不为可能出现的子项目预留目录**（不用 `packages/*`、`apps/*`）。现在有几个就摆几个；真要多一个，加一个目录、加一个 workflow 即可，已有子项目一个字都不用动。同理，不预先造 `cli.yml`：CLI 的技术栈虽已定（Go，[ADR 0011](../../decisions/0011-server-and-cli-stack.md)），但在有代码之前，一个跑不出任何东西的 workflow 只会假装绿。
 3. **`gateway/` 是跨子项目的，所以它不放在任何子项目目录里。** 服务端要它（`GET /gateway/SKILL.md`、发布到 well-known），CLI 也要它（`setup` 装它）。它同时是一个 skill 目录——标准要求目录名等于 `name`（§1.1），所以是 `gateway/skill-platform/`；直接放在仓库根下会得到 `skill-platform/skill-platform/`。名字用 `gateway` 而不是 `skills`：复数会暗示这里有一堆 skill，而实际永远只有 §4.5 那一个。
 4. **Dockerfile 跟着它构建的东西走。** 服务端镜像的定义在 `skill-platform-server/Dockerfile`，不在仓库根的 `.cicd/`。构建上下文**仍是仓库根**（镜像要一并带上 `gateway/`），由 `.dockerignore` 收敛；服务端的 workflow 因此也在 `gateway/**` 变化时触发。
 
@@ -339,7 +343,7 @@ agent 依 skill 指示完成任务
 
 ## 第 3 章 · 领域模型与表结构
 
-SQLite 起步；列类型与索引同时考虑将来迁 Postgres。时间一律 RFC3339 UTC 字符串；主键一律 ULID（不透明、可按时间排序、无自增泄露）。
+引擎是 **PostgreSQL**（[ADR 0010](../../decisions/0010-storage-in-postgres.md)）——它是本项目**唯一**的状态存储，元数据、权限、审计与**文件字节**都在里面。时间一律 RFC3339 UTC 字符串；主键一律 ULID（不透明、可按时间排序、无自增泄露）。
 
 ### 3.1 身份与鉴权
 
@@ -507,12 +511,19 @@ CREATE TABLE version_file (
   PRIMARY KEY (version_id, relpath)
 );
 
-CREATE TABLE blob (
+CREATE TABLE blob (                           -- 只有元数据行，字节不在这里
   sha256      TEXT PRIMARY KEY,
   size        INTEGER NOT NULL,
-  storage_ref TEXT NOT NULL,                  -- blob store 里的 key
   created_at  TEXT NOT NULL
 );
+
+-- 字节单独一张表，并放在单独的表空间（ADR 0010 决定 2）：这样它与元数据可以分开备份
+-- （元数据小可频繁备，字节大走低频备），blob 的页也不会把元数据的页挤出 shared_buffers。
+-- 主键就是 sha256 —— 「字节存在哪」由 BlobStore.get/put(sha256) 那层接口挡住，表结构不是接缝。
+CREATE TABLE blob_content (
+  sha256  TEXT PRIMARY KEY REFERENCES blob(sha256) ON DELETE CASCADE,
+  bytes   BYTEA NOT NULL
+) TABLESPACE blob_ts;                         -- 表空间由部署时创建
 ```
 
 **五个关键设计点**：
@@ -521,7 +532,7 @@ CREATE TABLE blob (
 2. **`UNIQUE(skill_id, digest)` 直接实现幂等发布**——同样内容重复发布不产生新版本。这也是"内容不变 → digest 不变"这条不变量的落点。
 3. **manifest 就是 `version_file` 的投影**，按 `relpath` 字典序排序即规范要求的确定性顺序。**顺序必须显式排序，不能依赖数据库返回顺序。**
 4. **`frontmatter` 存原始 JSON 并透传未知字段。** 飞书的 `metadata.requires.bins` 是嵌套的，现有 `parse_frontmatter` 会丢——必须换更完整的 YAML 解析，且**解析失败不得静默降级**。
-5. **`blob` 只增，删除版本不立刻删 blob**（可能被其他版本引用），靠后台 GC 比对引用计数。内容寻址天然去重——不同 skill 共享同一份 `references/` 时只存一份。
+5. **`blob` 只增，删除版本不立刻删 blob**（可能被其他版本引用），靠后台 GC 比对引用计数——而且这次回收**必须与版本变更在同一个事务里完成**，否则会留下「字节还在、引用没了」或反过来的窗口（[ADR 0010](../../decisions/0010-storage-in-postgres.md)）。内容寻址天然去重——不同 skill 共享同一份 `references/` 时只存一份。
 
 **digest 算法（必须确定性）**：
 
@@ -534,15 +545,11 @@ digest = sha256( concat( for f in files_sorted_by_relpath:
 
 ### 3.4 检索与统计
 
-**索引范围**：`skill_fts` 建在 `skill` 全表上（FTS5 外部内容表，只索引 L1 三个字段）。**所有权过滤在查询时做**——检索必须 JOIN `namespace`，把结果限定在**调用者有权访问的命名空间**内，绝不能拿 `skill_fts` 的 MATCH 结果直接返回。v1 每个用户只有个人命名空间，所以实际等于「只搜自己」；写漏这个谓词就会泄露别人的 `private` skill。
+**索引范围**：索引建在 `skill` 上，**只覆盖 L1 三个字段**。**所有权过滤在查询时做**——检索必须 JOIN `namespace`，把结果限定在**调用者有权访问的命名空间**内，绝不能把索引的匹配结果直接返回。v1 每个用户只有个人命名空间，所以实际等于「只搜自己」；写漏这个谓词就会泄露别人的 `private` skill。
+
+**索引的物理形态待定。** 原计划的 SQLite `FTS5 + trigram` 已实测**不可行**（理由与证据见 [ADR 0010](../../decisions/0010-storage-in-postgres.md)，待验事项见第 8 章开放问题 3），方向转为 PostgreSQL 侧的 `pg_bigm`；排序的文本相关性算法也随之一并待定。所以下表**只保留与索引形态无关的部分**：
 
 ```sql
-CREATE VIRTUAL TABLE skill_fts USING fts5(
-  name, title, description,
-  content='skill', content_rowid='rowid',
-  tokenize='trigram'                          -- 对中文子串匹配可用；需实测 SQLite 构建支持
-);
-
 CREATE TABLE skill_stat (
   skill_id       TEXT PRIMARY KEY REFERENCES skill(id) ON DELETE CASCADE,
   search_hits    INTEGER NOT NULL DEFAULT 0,  -- 出现在搜索结果里
@@ -558,16 +565,16 @@ CREATE TABLE skill_stat (
 **排序公式（P0，必须可解释）**：
 
 ```
-score = w1 * text_relevance(FTS5 bm25) + w2 * freshness(updated_at) + w3 * manual_weight
+score = w1 * text_relevance + w2 * freshness(updated_at) + w3 * manual_weight
 ```
 
-P0 没有使用数据，只能用文本相关性 + 新鲜度 + 人工权重；`skill_stat` 是为 P1 的排序准备的。**排序质量在这个模型下就是产品的核心**——目录不常驻，「这个任务正好有个 skill 能用」完全靠它，所以要**可解释、可调、可回归测试**。
+**`text_relevance` 的具体算法随索引形态一并待定**——原计划写死的「FTS5 bm25」在中文上拿不到。但它必须满足下文那三条要求：**可解释、可调、可回归测试**。P0 没有使用数据，只能用文本相关性 + 新鲜度 + 人工权重；`skill_stat` 是为 P1 的排序准备的。**排序质量在这个模型下就是产品的核心**——目录不常驻，「这个任务正好有个 skill 能用」完全靠它。
 
 ### 3.5 审计
 
 ```sql
 CREATE TABLE audit_event (
-  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  id            BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
   actor_user_id TEXT,
   action        TEXT NOT NULL,                -- publish|delete|rollback|token_issue|...
   target_type   TEXT NOT NULL,
@@ -682,13 +689,15 @@ skill 的内容会被客户端取走、在客户端环境里使用，事后追�
 | `POST` | `/logout` | 登出 |
 | `GET` | `/oauth/authorize` | 授权端点（PKCE 必需） |
 | `POST` | `/oauth/token` | `authorization_code` / `refresh_token` / `client_credentials` |
-| `POST` | `/oauth/register` | DCR |
+| `POST` | `/oauth/register` | DCR（**v1 不启用**，见下） |
 | `GET` | `/.well-known/oauth-authorization-server` | RFC 8414 |
 | `GET` | `/.well-known/openid-configuration` | OIDC discovery（可选） |
 | `GET` | `/.well-known/oauth-protected-resource` | RFC 9728 |
 | `GET` | `/.well-known/jwks.json` | 若用 JWT 签名 |
 
-**三种客户端注册方式都要支持**（1.7 的结论）：CIMD（识别 URL 形式的 `client_id`，去那个 URL 取元数据）、DCR（`/oauth/register`）、预注册。只做 CIMD 会卡死一批客户端。
+**注册方式按分期来**（[ADR 0011](../../decisions/0011-server-and-cli-stack.md)）：**v1 只做预注册**——v1 的客户端只有我们自己的 CLI，这是一方客户端，`client_id` 随 CLI 发布即可。**CIMD**（识别 URL 形式的 `client_id`，去那个 URL 取元数据）要等 **P2 的 MCP 适配器**接入第三方客户端时才需要；**DCR**（`/oauth/register`）只作兼容，**v1 不启用**。
+
+> **一条实现约束**：客户端查找从 v1 就走接口（Spring Security 的 `RegisteredClientRepository`），**不要硬编码成「反正只有一个客户端」**——那样 P2 加 CIMD 就变成重构授权流程，而不是新增一个实现。
 
 ### 4.5 网关 skill 的分发接口
 
@@ -750,21 +759,25 @@ skill 的内容会被客户端取走、在客户端环境里使用，事后追�
 
 ## 第 6 章 · 与现有代码的关系
 
-原基线是单包 `skill_platform/`，分层是对的。**它已经按 §2.4 的布局搬完**（2026-09-26）：可复用的四个模块现在在 `skill-platform-server/src/skill_platform_server/`，`materializer.py` 与旧 `__main__.py` 已删除。
+原基线是单包 `skill_platform/`，分层是对的。**2026-09-27 技术栈定为 Java 之后（[ADR 0011](../../decisions/0011-server-and-cli-stack.md)），它的定位变了：不再是「搬过来复用的代码」，而是一份「可执行的设计参考」。**
 
-下表逐项说明处置。**四个模块是原样搬迁（0 行改动），行号仍然有效**——[`known-issues.md`](known-issues.md) 里那些 `文件:行号` 锚点因此照旧可用，只有 `materializer.py` / `__main__.py` 的锚点随模块删除而失效。
+这句话改变了下表的读法：**每一行记的是「这份行为值不值得在 Java 里重建」，而不是「这段 Python 代码怎么处理」。** 因此**行号不再是有效锚点**——[`known-issues.md`](known-issues.md) 里指向这些模块的锚点（条数见该文件开头）随之成为历史记录。
 
-| 现有 | 处置 |
+代码一共 **1285 行**（四个模块 + 测试）。按此定位，**值得在 Java 里重建的大约只有 150–250 行**；其余本来就要重写：`parse_frontmatter` 必须换、`permissions.py` 要收窄、`store.py` 的连接管理要改、`schema.py` 的迁移机制要新建。
+
+| 现有 | 在 Java 里怎么处置 |
 |---|---|
-| `importer.parse_frontmatter` | **必须换**。只支持扁平 `key: value` 与缩进列表，而 `metadata` 实际是嵌套的（飞书案例），会静默丢字段。改用完整 YAML 解析，**解析失败不得静默降级** |
-| `importer.discover_skills` / `_collect_files` | **复用**为上传校验骨架。需加：标准字段校验、512 文件 / 16 MiB 上限、符号链接与路径穿越检查 |
-| `importer._extract_links` | 复用，用于"正文引用了不存在的文件"这类警告级诊断 |
-| `store.py` | **扩**：namespace / skill / version / version_file / blob / user / token 等表。现有"每操作开新连接 + WAL + busy_timeout"可留 |
-| `store.permissions_version` + `permissions.PermissionCache` | **保留复用**——"版本计数器失效 + TTL 兜底 + 失败 fail-closed"正好是搜索索引缓存需要的机制 |
-| `materializer.py` | **已删除**（2026-09-26）。本项目不再把 skill 落到本地，ADR 0001 早已判它作废。归档/导出若将来真需要，从 git 历史取回改写 |
-| `permissions.py` | **退化**：不做门控，只做**可见性**（public/unlisted/private）；**命名空间成员判定推迟**（v1 只有所有者一行）。family 匹配（`lark` 覆盖 `lark-*`）对集合型 skill 仍有用 |
-| `__main__.py` | **已删除**。它的子命令全部属于旧模型，没有可搬的。新的两组子命令——**客户端**（login/setup/search/show/get）与**管理端**（publish/versions/…）——在 `skill-platform-cli/` 里另写（§4.6） |
-| `schema.py` | 加表；`meta` + **schema_version 的校验与迁移需要新建**——基线代码只写入版本号、从不与常量比对，所以并不存在可「保留」的迁移机制（证据见 [`known-issues.md`](known-issues.md) L2） |
+| `importer.parse_frontmatter` | **重建，且换实现**。它只支持扁平 `key: value` 与缩进列表，而 `metadata` 实际是嵌套的（飞书案例），会静默丢字段。用完整 YAML 解析，**解析失败不得静默降级** |
+| `importer.discover_skills` / `_collect_files` | **重建**为上传校验骨架。原行为（怎么界定一个 skill、怎么收文件）是这份基线最值钱的部分。需加：标准字段校验、512 文件 / 16 MiB 上限、符号链接与路径穿越检查 |
+| `importer._extract_links` | **重建**，用于"正文引用了不存在的文件"这类警告级诊断 |
+| `store.py` | **重建**：namespace / skill / version / version_file / blob / blob_content / user / token 等表。原设计是「每操作开新连接 + WAL + busy_timeout」，那是 SQLite 的东西——PostgreSQL 下是连接池 + `lock_timeout`（[ADR 0010](../../decisions/0010-storage-in-postgres.md)） |
+| `store.permissions_version` + `permissions.PermissionCache` | **保留这套机制，重写实现**——"版本计数器失效 + TTL 兜底 + 失败 fail-closed"正好是搜索索引缓存需要的 |
+| `materializer.py` | **已删除**（2026-09-26），不重建。本项目不再把 skill 落到本地，[ADR 0001](../../decisions/0001-server-authoritative.md) 早已判它作废。归档/导出若将来真需要，从 git 历史取回改写 |
+| `permissions.py` | **收窄后再重建**：不做门控，只做**可见性**（public/unlisted/private）；命名空间成员判定推迟（v1 只有所有者一行）。family 匹配（`lark` 覆盖 `lark-*`）对集合型 skill 仍有用 |
+| `__main__.py` | **已删除**，不重建。它的子命令全属旧模型。新的两组子命令——客户端（login/setup/search/show/get）与管理端（publish/versions/…）——**在 `skill-platform-cli/` 里用 Go 另写**（[ADR 0011](../../decisions/0011-server-and-cli-stack.md)、§4.6） |
+| `schema.py` | **重建**：加表；`meta` + **schema_version 的校验与迁移需要新建**——基线只写入版本号、从不与常量比对，并不存在可「保留」的迁移机制（证据见 [`known-issues.md`](known-issues.md) L2） |
+
+**Python 基线暂不删除**，留到 Java 覆盖同一片语义之后再删：它是 `_collect_files` 的行为、权限族匹配这些边角语义的**唯一可执行记录**——本文是散文，不是可运行的。
 
 **要新增的核心能力**：完整 YAML 解析器、严格校验器、digest 计算、blob store + GC、搜索与排序、OAuth AS、HTTP 服务、CLI 登录流程、网关 skill 的安装与更新。
 
@@ -776,7 +789,7 @@ skill 的内容会被客户端取走、在客户端环境里使用，事后追�
 
 - 表结构落地（第 3 章）+ 严格校验 + digest + 不可变版本
 - 四个读接口 + 服务端搜索排序
-- **服务端可运行入口**（ASGI app）。**当前镜像构建得出来但起不来**：`skill-platform-server/Dockerfile` 的 `CMD` 指向本项，在它交付之前 `:latest` 不是可用产物
+- **服务端可运行入口**（HTTP 服务）。**当前镜像构建得出来但起不来**——还没有入口，在它交付之前 `:latest` 不是可用产物。构建配置随 [ADR 0011](../../decisions/0011-server-and-cli-stack.md) 换成 Java 后，这一条不变
 - **鉴权用一把静态令牌先行**（AS 放 P1），把链路跑通
 - CLI：`setup` / `search` / `show` / `get`
 - 网关 skill 发布到 well-known 索引（V2 + V1 两条路径）
@@ -784,7 +797,7 @@ skill 的内容会被客户端取走、在客户端环境里使用，事后追�
 
 ### P1 · 自建登录与令牌
 
-- OAuth 2.1 AS：`/login`、`/oauth/authorize`、`/oauth/token`、三种注册方式（CIMD + DCR + 预注册）
+- OAuth 2.1 AS：`/login`、`/oauth/authorize`、`/oauth/token` + 发现端点；**注册方式只做预注册**（CIMD 留到 P2，DCR 不启用——[ADR 0011](../../decisions/0011-server-and-cli-stack.md)）
 - CLI `login`（loopback PKCE）+ 无人值守 `--client-credentials`
 - 可见性生效（**成员判定推迟**，v1 只有所有者一行）；审计日志
 - 管理端写接口
@@ -792,6 +805,7 @@ skill 的内容会被客户端取走、在客户端环境里使用，事后追�
 ### P2 · MCP 适配器与检索质量
 
 - MCP 适配器：`skills/list` / `skills/get` / `resources/read`（能力协商，客户端不支持则不影响 API）
+- **AS 加 CIMD**：第三方客户端（Claude Code / VS Code / ChatGPT）从这里接进来。CIMD 是它们唯一的路径，所以这一项与适配器同批交付；DCR 仍只作兼容
 - 排序用上 `skill_stat` 的信号；检索质量回归测试
 - 版本历史 / diff / 回滚
 
@@ -807,7 +821,7 @@ skill 的内容会被客户端取走、在客户端环境里使用，事后追�
 
 1. **网关 skill 的 `description` 怎么写。** 它决定发现体验的上限，且没有数据可依。建议先写，然后用真实任务集做回归（"给这 20 个任务，看它该不该去查 skill 库"）。
 2. **排序公式的权重与可解释性。** P0 纯启发式，必须可解释（作者/用户要能理解为什么排这个位置），且要能回归测试。
-3. **搜索的中文分词。** 计划用 FTS5 + `trigram`，**需实测目标 SQLite 构建是否带该 tokenizer**；不带则退回 `LIKE` 或引入外部索引。
+3. **搜索的中文分词与索引形态。** 原计划（SQLite FTS5 + `trigram`）已实测**不可行**：它对少于 3 个字符的查询返回 0，而两个汉字是最常见的一次查询（证据见 [ADR 0010](../../decisions/0010-storage-in-postgres.md)）。方向是 PostgreSQL 侧的 **`pg_bigm`**（2-gram 索引）——**要验证**它在选定的实例系列上可用、且 `shared_preload_libraries` 能配上。排序的文本相关性算法随之一并待定（见 §3.4）。
 4. **`relpath` 的取值规范。** 允许哪些字符、是否允许非 ASCII、大小写敏感性——一旦发布就不好改，且它进 URL。
 5. **无人值守的 Client Credentials 怎么发放**：谁有权创建、绑哪个用户身份、scope 怎么限。
 6. **blob GC 的策略**：延迟多久回收、是否需要"回收前先归档"。
@@ -819,7 +833,7 @@ skill 的内容会被客户端取走、在客户端环境里使用，事后追�
 
 本设计里的**决策不写在这里**，而是独立成编号 ADR —— 决策跨版本存活，不该随设计文档一起被重写。
 
-完整索引见 [`decisions/README.md`](../../decisions/README.md)。与本版相关的九条：
+完整索引见 [`decisions/README.md`](../../decisions/README.md)。与本版相关的十一条：
 
 | ADR | 决策 | 本文对应章节 |
 |---|---|---|
@@ -832,6 +846,8 @@ skill 的内容会被客户端取走、在客户端环境里使用，事后追�
 | [0007](../../decisions/0007-self-built-oauth-as.md) | 自建 OAuth 2.1 AS，支持三种客户端注册方式 | 3.1、4.4、4.6 |
 | [0008](../../decisions/0008-no-script-execution.md) | P0 不做脚本执行 | 第 7 章 |
 | [0009](../../decisions/0009-drop-l2n.md) | 砍掉 `l2#n`，付费边界只落在层与层之间 | 附录 B |
+| [0010](../../decisions/0010-storage-in-postgres.md) | 存储全部落在 PostgreSQL（含字节） | 第 2、3 章 |
+| [0011](../../decisions/0011-server-and-cli-stack.md) | 技术栈：服务端 Java + Spring，CLI 用 Go | 第 2、4、6、7 章 |
 
 **本文只链接、不复述理由。** 若发现正文里重复解释了某条决策的原因，那是需要清理的重复——理由只有一处权威来源，就是 ADR 本身。
 

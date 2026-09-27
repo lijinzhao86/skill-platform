@@ -15,12 +15,17 @@ toolchain, its tests, and its workflow, and **nothing at the repository root ass
 a language** — so a subproject can be Python, Node, or anything else without
 disturbing the others.
 
-- `skill-platform-server/` — the API and authorization server, one process on SQLite
-  to start. Self-contained: its own `pyproject.toml`, `Dockerfile`, `tests/`. Its CI is
-  `.github/workflows/server.yml` at the repository root — workflows can only live there.
-  **Not runnable yet:** no entry point.
+- `skill-platform-server/` — the API and authorization server, one process, **Java
+  (Spring Boot)** with all state in **PostgreSQL** ([ADR 0011](docs/decisions/0011-server-and-cli-stack.md),
+  [ADR 0010](docs/decisions/0010-storage-in-postgres.md)). Self-contained: its own build
+  config, `Dockerfile`, `tests/`. Its CI is `.github/workflows/server.yml` at the
+  repository root — workflows can only live there. **Not runnable yet:** no entry point.
+  The Python package still in this directory is the **pre-Java baseline**, kept as a
+  design reference until the Java implementation covers the same ground
+  ([technical design](docs/versions/v1-hosting/technical-design.md) §6).
 - `skill-platform-cli/` — the client that holds credentials and fetches skills on
-  demand. **Not implemented, and its stack is not yet decided** — see its README.
+  demand. **Language decided: Go** ([ADR 0011](docs/decisions/0011-server-and-cli-stack.md));
+  not implemented yet — see its README.
 - `gateway/skill-platform/` — source of the gateway skill: the only skill installed
   locally, and the protocol agents follow to fetch the rest. Shared by the server
   (which serves it) and the CLI (which installs it).
@@ -33,6 +38,10 @@ disturbing the others.
   to one does not run another's CI.
 
 ## Quick start
+
+These commands belong to the **pre-Java Python baseline** that still occupies
+`skill-platform-server/`. They work today; the server's real toolchain becomes Maven or
+Gradle once the Java implementation lands ([ADR 0011](docs/decisions/0011-server-and-cli-stack.md)).
 
 ```bash
 cd skill-platform-server
