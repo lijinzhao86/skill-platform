@@ -1,0 +1,219 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1120" height="1040" viewBox="0 0 1120 1040"
+     fill="#1f2328" color="#1f2328"
+     font-family="-apple-system,BlinkMacSystemFont,'Segoe UI','PingFang SC','Hiragino Sans GB','Microsoft YaHei','Noto Sans CJK SC',sans-serif">
+  <title>资源与版本模型总览：从用户到字节</title>
+  <desc>地址经四层解析到字节：skill（身份 id，地址 namespace/name）、版本（身份 digest，别名 @3）、文件（身份 version_id + relpath）、字节（身份 sha256）。发布方向相反，是字节到 skill。底部说明 latest 与序号的区别、周围的实体、以及与 git 的对照。</desc>
+
+  <!--
+    Colours are written as presentation attributes so the light theme renders even
+    with no CSS at all; the media query below overrides them for dark mode only.
+    Everything foreground uses currentColor, so one `color` override recolours all
+    of it.
+  -->
+  <style>
+    .mono { font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace; }
+    @media (prefers-color-scheme: dark) {
+      svg { fill: #e6edf3; color: #e6edf3; }
+      .bg { fill: #0d1117; }
+      .pn { fill: #161b22; }
+      .bd { stroke: #30363d; }
+      .mu { fill: #9198a1; }
+      .bt { fill: #0d1117; }
+      .t1 { fill: #13233c; } .s1 { stroke: #1f3a5f; } .c1 { fill: #6ea8fe; }
+      .t2 { fill: #221a3a; } .s2 { stroke: #3b2d63; } .c2 { fill: #b48cf5; }
+      .t3 { fill: #33260f; } .s3 { stroke: #5c4318; } .c3 { fill: #e3a336; }
+      .t4 { fill: #10291d; } .s4 { stroke: #1c4630; } .c4 { fill: #3fb950; }
+    }
+  </style>
+
+  <defs>
+    <marker id="mdl-arrow" viewBox="0 0 10 10" refX="8" refY="5"
+            markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 Z" fill="currentColor"/>
+    </marker>
+  </defs>
+
+  <rect class="bg" x="0" y="0" width="1120" height="1040" fill="#ffffff"/>
+
+  <text x="64" y="46" font-size="25" font-weight="650">资源与版本模型</text>
+  <text fill="#59636e" x="64" y="70" class="mu" font-size="13">从用户到字节：四层粒度、四个不能混用的身份；地址是 <tspan class="mono">namespace/name</tspan>，不是 <tspan class="mono">id</tspan>。</text>
+
+  <!-- 方向：解析向下，发布向上 -->
+  <path d="M30 216 L30 698" fill="none" stroke="currentColor" stroke-width="1.5"
+        opacity="0.4" marker-end="url(#mdl-arrow)"/>
+  <path d="M1090 700 L1090 218" fill="none" stroke="currentColor" stroke-width="1.5"
+        opacity="0.4" marker-end="url(#mdl-arrow)"/>
+
+  <!-- ── 地址栏 ───────────────────────────────────────────────────────── -->
+  <rect class="pn bd" x="64" y="88" width="992" height="96" rx="12" fill="#f7f9fb" stroke="#d8dee4"/>
+  <text fill="#59636e" x="84" y="112" class="mu" font-size="12">地址 —— 外部世界唯一的入口</text>
+
+  <text fill="#59636e" x="84" y="148" class="mono mu" font-size="17">/v1/skills/</text>
+
+  <rect class="t1 s1" x="210" y="129" width="59" height="26" rx="6" fill="#eef4ff" stroke="#c3d8fd"/>
+  <text x="218" y="148" class="mono c1" font-size="17" fill="#2563eb">demo</text>
+
+  <text fill="#59636e" x="277" y="148" class="mono mu" font-size="17">/</text>
+
+  <rect class="t1 s1" x="296" y="129" width="144" height="26" rx="6" fill="#eef4ff" stroke="#c3d8fd"/>
+  <text x="304" y="148" class="mono c1" font-size="17" fill="#2563eb">feishu-tasks</text>
+
+  <rect class="t2 s2" x="448" y="129" width="37" height="26" rx="6" fill="#f5f0ff" stroke="#ddd0fd"/>
+  <text x="456" y="148" class="mono c2" font-size="17" fill="#7c3aed">@3</text>
+
+  <rect class="t3 s3" x="493" y="129" width="294" height="26" rx="6" fill="#fff8ec" stroke="#f2dcb3"/>
+  <text x="501" y="148" class="mono c3" font-size="17" fill="#b45309">/files/references/fields.md</text>
+
+  <text fill="#59636e" x="811" y="148" class="mu" font-size="12.5">地址到「文件」为止：</text>
+  <text fill="#59636e" x="811" y="170" class="mu" font-size="12.5">字节不进 URL，由文件指向。</text>
+
+  <text fill="#59636e" x="64" y="204" class="mu" font-size="12.5">↓ 解析：地址 → skill → 版本 → 文件 → 字节</text>
+
+  <!-- ── ① skill ──────────────────────────────────────────────────────── -->
+  <rect class="t1 bd" x="64" y="216" width="992" height="110" rx="12" fill="#eef4ff" stroke="#c3d8fd"/>
+  <rect class="c1" x="64" y="216" width="6" height="110" rx="3" fill="#2563eb"/>
+  <circle class="c1" cx="104" cy="248" r="16" fill="#2563eb"/>
+  <text x="104" y="253" font-size="15" font-weight="700" class="bt" fill="#ffffff" text-anchor="middle">1</text>
+  <text x="132" y="246" class="c1" font-size="17" font-weight="600" fill="#2563eb">skill</text>
+  <text fill="#59636e" x="132" y="272" class="mono mu" font-size="13">Skill</text>
+
+  <line class="bd" x1="336" y1="234" x2="336" y2="308" stroke="#d8dee4"/>
+  <text x="356" y="254" font-size="13">skill 的身份记录：名字、标题、描述、可见性</text>
+  <text x="356" y="278" font-size="13">namespace + name 唯一；不含任何内容</text>
+
+  <line class="bd" x1="760" y1="234" x2="760" y2="308" stroke="#d8dee4"/>
+  <text fill="#59636e" x="772" y="254" class="mu" font-size="11.5">身份</text>
+  <text x="822" y="254" class="mono c1" font-size="12.5" fill="#2563eb">id</text>
+  <text fill="#59636e" x="772" y="278" class="mu" font-size="11.5">地址</text>
+  <text x="822" y="278" class="mono c1" font-size="12.5" fill="#2563eb">namespace / name</text>
+  <text fill="#59636e" x="772" y="302" class="mu" font-size="11.5">变</text>
+  <text x="822" y="302" font-size="12.5">id 永不变，name 可变</text>
+
+  <!-- ── ② 版本 ───────────────────────────────────────────────────────── -->
+  <rect class="t2 bd" x="64" y="342" width="992" height="110" rx="12" fill="#f5f0ff" stroke="#ddd0fd"/>
+  <rect class="c2" x="64" y="342" width="6" height="110" rx="3" fill="#7c3aed"/>
+  <circle class="c2" cx="104" cy="374" r="16" fill="#7c3aed"/>
+  <text x="104" y="379" font-size="15" font-weight="700" class="bt" fill="#ffffff" text-anchor="middle">2</text>
+  <text x="132" y="372" class="c2" font-size="17" font-weight="600" fill="#7c3aed">版本</text>
+  <text fill="#59636e" x="132" y="398" class="mono mu" font-size="13">SkillVersion</text>
+
+  <line class="bd" x1="336" y1="360" x2="336" y2="434" stroke="#d8dee4"/>
+  <text x="356" y="380" font-size="13">一次不可变快照：清单 + 时间 + 作者</text>
+  <text x="356" y="404" font-size="13">digest 只对清单哈希，不含时间与作者</text>
+  <text x="356" y="428" class="c2" font-size="13" fill="#7c3aed">→ 同内容重复发布 = 同一个版本</text>
+
+  <line class="bd" x1="760" y1="360" x2="760" y2="434" stroke="#d8dee4"/>
+  <text fill="#59636e" x="772" y="380" class="mu" font-size="11.5">身份</text>
+  <text x="822" y="380" class="mono c2" font-size="12.5" fill="#7c3aed">digest</text>
+  <text fill="#59636e" x="772" y="404" class="mu" font-size="11.5">别名</text>
+  <text x="822" y="404" class="mono c2" font-size="12.5" fill="#7c3aed">@3</text>
+  <text fill="#59636e" x="772" y="428" class="mu" font-size="11.5">变</text>
+  <text x="822" y="428" font-size="12.5">永不改变</text>
+
+  <!-- ── ③ 文件 ───────────────────────────────────────────────────────── -->
+  <rect class="t3 bd" x="64" y="468" width="992" height="110" rx="12" fill="#fff8ec" stroke="#f2dcb3"/>
+  <rect class="c3" x="64" y="468" width="6" height="110" rx="3" fill="#b45309"/>
+  <circle class="c3" cx="104" cy="500" r="16" fill="#b45309"/>
+  <text x="104" y="505" font-size="15" font-weight="700" class="bt" fill="#ffffff" text-anchor="middle">3</text>
+  <text x="132" y="498" class="c3" font-size="17" font-weight="600" fill="#b45309">文件（清单一项）</text>
+  <text fill="#59636e" x="132" y="524" class="mono mu" font-size="13">VersionFile</text>
+
+  <line class="bd" x1="336" y1="486" x2="336" y2="560" stroke="#d8dee4"/>
+  <text x="356" y="506" font-size="13">清单里的一项：某个路径指向哪份字节</text>
+  <text x="356" y="530" font-size="13">清单有序；只含摘要，不含内容</text>
+
+  <line class="bd" x1="760" y1="486" x2="760" y2="560" stroke="#d8dee4"/>
+  <text fill="#59636e" x="772" y="506" class="mu" font-size="11.5">身份</text>
+  <text x="822" y="506" class="mono c3" font-size="12.5" fill="#b45309">(version_id, relpath)</text>
+  <text fill="#59636e" x="772" y="530" class="mu" font-size="11.5">地址</text>
+  <text x="822" y="530" class="mono c3" font-size="12.5" fill="#b45309">/files/references/fields.md</text>
+  <text fill="#59636e" x="772" y="554" class="mu" font-size="11.5">变</text>
+  <text x="822" y="554" font-size="12.5">随版本存活</text>
+
+  <!-- ── ④ 字节 ───────────────────────────────────────────────────────── -->
+  <rect class="t4 bd" x="64" y="594" width="992" height="110" rx="12" fill="#ecfdf5" stroke="#a7e8c8"/>
+  <rect class="c4" x="64" y="594" width="6" height="110" rx="3" fill="#047857"/>
+  <circle class="c4" cx="104" cy="626" r="16" fill="#047857"/>
+  <text x="104" y="631" font-size="15" font-weight="700" class="bt" fill="#ffffff" text-anchor="middle">4</text>
+  <text x="132" y="624" class="c4" font-size="17" font-weight="600" fill="#047857">字节</text>
+  <text fill="#59636e" x="132" y="650" class="mono mu" font-size="13">Blob · BlobContent</text>
+
+  <line class="bd" x1="336" y1="612" x2="336" y2="686" stroke="#d8dee4"/>
+  <text x="356" y="632" font-size="13">按内容寻址的一份内容；全局唯一、跨 skill 去重</text>
+  <text x="356" y="656" font-size="13">拆两张表：元数据行与字节，一对一</text>
+
+  <line class="bd" x1="760" y1="612" x2="760" y2="686" stroke="#d8dee4"/>
+  <text fill="#59636e" x="772" y="632" class="mu" font-size="11.5">身份</text>
+  <text x="822" y="632" class="mono c4" font-size="12.5" fill="#047857">sha256</text>
+  <text fill="#59636e" x="772" y="656" class="mu" font-size="11.5">地址</text>
+  <text x="822" y="656" font-size="12.5">不在 URL 里，由文件指向</text>
+  <text fill="#59636e" x="772" y="680" class="mu" font-size="11.5">变</text>
+  <text x="822" y="680" font-size="12.5">内容不变则永远不变</text>
+
+  <text fill="#59636e" x="1056" y="724" class="mu" font-size="12.5" text-anchor="end">↑ 发布：字节 → 清单 → 版本 → skill</text>
+
+  <!-- ── 底注 A：latest 与序号 ─────────────────────────────────────────── -->
+  <rect class="pn bd" x="64" y="736" width="320" height="200" rx="12" fill="#f7f9fb" stroke="#d8dee4"/>
+  <text x="82" y="766" font-size="14" font-weight="600">latest 与 序号</text>
+  <line class="bd" x1="82" y1="778" x2="366" y2="778" stroke="#d8dee4"/>
+  <text x="82" y="802" font-size="12.5"><tspan class="mono" font-weight="600">latest</tspan> 是指针，不是实体</text>
+  <text fill="#59636e" x="82" y="824" class="mu" font-size="12.5">随每次发布前移（= git 的 main）</text>
+  <text x="82" y="846" font-size="12.5"><tspan class="mono" font-weight="600">@3</tspan> 是不可变别名（= git 的 tag）</text>
+  <text fill="#59636e" x="82" y="868" class="mu" font-size="12.5">不是身份、不是计数：重发同内容不耗号</text>
+  <line class="bd" x1="82" y1="882" x2="366" y2="882" stroke="#d8dee4"/>
+  <text x="82" y="906" font-size="12.5">版本身份是 <tspan class="mono">digest</tspan>，不含时间与作者</text>
+  <text x="82" y="926" class="c2" font-size="12.5" fill="#7c3aed">∴ 同内容重复发布 = 同一个版本</text>
+
+  <!-- ── 底注 B：周围的实体 ───────────────────────────────────────────── -->
+  <rect class="pn bd" x="400" y="736" width="320" height="200" rx="12" fill="#f7f9fb" stroke="#d8dee4"/>
+  <text x="418" y="766" font-size="14" font-weight="600">周围的实体</text>
+  <line class="bd" x1="418" y1="778" x2="702" y2="778" stroke="#d8dee4"/>
+  <text x="418" y="802" class="mono" font-size="11.5">User ─1:N→ Namespace ─1:N→ Skill</text>
+  <text x="418" y="824" font-size="12.5">NamespaceMember：N:N，键是那对关系</text>
+  <text x="418" y="846" font-size="12.5">SkillStat：使用计数，P1 才写</text>
+  <text x="418" y="868" font-size="12.5">AuditEvent：自增 bigint，不进 URL</text>
+  <line class="bd" x1="418" y1="882" x2="702" y2="882" stroke="#d8dee4"/>
+  <text x="418" y="906" class="mono" font-size="11.5">Skill.current_version_id</text>
+  <text fill="#59636e" x="418" y="926" class="mu" font-size="12.5">故意无外键：指向 skill_version 就循环</text>
+
+  <!-- ── 底注 C：与 git 的对照 ────────────────────────────────────────── -->
+  <rect class="pn bd" x="736" y="736" width="320" height="200" rx="12" fill="#f7f9fb" stroke="#d8dee4"/>
+  <text x="754" y="766" font-size="14" font-weight="600">与 git 的对照</text>
+  <line class="bd" x1="754" y1="778" x2="1038" y2="778" stroke="#d8dee4"/>
+
+  <text fill="#59636e" x="754" y="802" class="mono mu" font-size="11.5">blob</text>
+  <text fill="#59636e" x="830" y="802" class="mu" font-size="11.5">↔</text>
+  <text x="852" y="802" font-size="12.5">字节（内容哈希）</text>
+  <text x="1032" y="802" class="c4" fill="#047857" font-size="12.5" text-anchor="end">✓</text>
+
+  <text fill="#59636e" x="754" y="824" class="mono mu" font-size="11.5">tree</text>
+  <text fill="#59636e" x="830" y="824" class="mu" font-size="11.5">↔</text>
+  <text x="852" y="824" font-size="12.5">清单 + digest</text>
+  <text x="1032" y="824" class="c4" fill="#047857" font-size="12.5" text-anchor="end">✓</text>
+
+  <text fill="#59636e" x="754" y="846" class="mono mu" font-size="11.5">commit</text>
+  <text fill="#59636e" x="830" y="846" class="mu" font-size="11.5">↔</text>
+  <text x="852" y="846" font-size="12.5">版本（无父提交）</text>
+  <text x="1032" y="846" class="c3" fill="#b45309" font-size="12.5" text-anchor="end">≈</text>
+
+  <text fill="#59636e" x="754" y="868" class="mono mu" font-size="11.5">ref</text>
+  <text fill="#59636e" x="830" y="868" class="mu" font-size="11.5">↔</text>
+  <text x="852" y="868" font-size="12.5">latest</text>
+  <text x="1032" y="868" class="c4" fill="#047857" font-size="12.5" text-anchor="end">✓</text>
+
+  <text fill="#59636e" x="754" y="890" class="mono mu" font-size="11.5">tag</text>
+  <text fill="#59636e" x="830" y="890" class="mu" font-size="11.5">↔</text>
+  <text x="852" y="890" font-size="12.5">序号</text>
+  <text x="1032" y="890" class="c4" fill="#047857" font-size="12.5" text-anchor="end">✓</text>
+
+  <text fill="#59636e" x="754" y="912" class="mono mu" font-size="11.5">工作区</text>
+  <text fill="#59636e" x="830" y="912" class="mu" font-size="11.5">↔</text>
+  <text x="852" y="912" font-size="12.5">无 —— v1 不做草稿</text>
+  <text fill="#59636e" x="1032" y="912" class="mu" font-size="12.5" text-anchor="end">✗</text>
+
+  <!-- ── 脚注：钉版 ───────────────────────────────────────────────────── -->
+  <rect class="pn bd" x="64" y="952" width="992" height="56" rx="12" fill="#f7f9fb" stroke="#d8dee4"/>
+  <rect class="c2" x="64" y="952" width="5" height="56" rx="2.5" fill="#7c3aed"/>
+  <text x="84" y="976" font-size="13" font-weight="600">钉版：客户端携带，服务端无状态</text>
+  <text fill="#59636e" x="84" y="996" class="mu" font-size="12">入口进一次 → 响应给出每个文件已钉版本的 uri（已写着 @3）→ 客户端照抄。中间谁发了 @4 都不影响：后续请求没再问过 latest。</text>
+</svg>

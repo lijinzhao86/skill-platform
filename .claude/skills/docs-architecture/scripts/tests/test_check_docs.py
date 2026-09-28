@@ -99,6 +99,9 @@ def build_docs(root: Path, **version_kwargs: object) -> Path:
     (docs / "target" / "README.md").write_text("# target\n", encoding="utf-8")
     (docs / "decisions").mkdir()
     (docs / "decisions" / "0001-ok.md").write_text(ADR_OK, encoding="utf-8")
+    arch = docs / "architecture"
+    arch.mkdir()
+    (arch / "README.md").write_text("# architecture\n", encoding="utf-8")
     return docs
 
 
@@ -324,6 +327,143 @@ def test_decisions_dir_inside_version_reported_once(tmp_path: Path) -> None:
     problems = check_docs.check_version(version_dir, "v1-x")
 
     assert len([p for p in problems if "decisions" in p]) == 1
+
+
+def test_architecture_index_alone_is_enough(tmp_path: Path) -> None:
+    """The optional parts are checked only when present.
+
+    Requiring `rules.md` / `model.md` / `modules/` up front would demand a file
+    before its content exists, which is how a stale copy of the version TD gets
+    committed next to the thing it was copied from.
+    """
+    docs = build_docs(tmp_path)
+
+    assert check_docs.check_architecture(docs) == []
+
+
+def test_architecture_optional_parts_are_accepted_when_present(tmp_path: Path) -> None:
+    docs = build_docs(tmp_path)
+    arch = docs / "architecture"
+    (arch / "rules.md").write_text("# rules\n", encoding="utf-8")
+    (arch / "model.md").write_text("# model\n", encoding="utf-8")
+    modules = arch / "modules"
+    modules.mkdir()
+    (modules / "M03-auth.md").write_text("# auth\n", encoding="utf-8")
+
+    assert check_docs.check_architecture(docs) == []
+
+
+def test_missing_architecture_dir_is_reported(tmp_path: Path) -> None:
+    docs = tmp_path / "docs"
+    docs.mkdir()
+
+    problems = check_docs.check_architecture(docs)
+
+    assert any("architecture" in problem for problem in problems)
+
+
+def test_missing_architecture_readme_is_reported(tmp_path: Path) -> None:
+    docs = build_docs(tmp_path)
+    (docs / "architecture" / "README.md").unlink()
+
+    problems = check_docs.check_architecture(docs)
+
+    assert "architecture/README.md 缺失" in problems
+
+
+def test_stray_file_in_architecture_is_reported(tmp_path: Path) -> None:
+    """The architecture axis is a closed shape, like a version folder."""
+    docs = build_docs(tmp_path)
+    (docs / "architecture" / "notes.md").write_text("# stray\n", encoding="utf-8")
+
+    problems = check_docs.check_architecture(docs)
+
+    assert any("notes.md" in problem for problem in problems)
+
+
+def test_stray_dir_in_architecture_is_reported(tmp_path: Path) -> None:
+    docs = build_docs(tmp_path)
+    (docs / "architecture" / "drafts").mkdir()
+
+    problems = check_docs.check_architecture(docs)
+
+    assert any("drafts/" in problem for problem in problems)
+
+
+def test_module_doc_naming(tmp_path: Path) -> None:
+    docs = build_docs(tmp_path)
+    modules = docs / "architecture" / "modules"
+    modules.mkdir()
+    (modules / "03-auth.md").write_text("# x\n", encoding="utf-8")
+
+    problems = check_docs.check_architecture(docs)
+
+    assert any("03-auth.md" in problem for problem in problems)
+
+
+def test_architecture_run_fails_end_to_end(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Architecture problems must reach the exit code, not just the helper."""
+    docs = build_docs(tmp_path)
+    (docs / "architecture" / "README.md").unlink()
+
+    monkeypatch.setattr(sys, "argv", ["check_docs.py", "--docs", str(docs)])
+
+    assert check_docs.main() == 1
+
+
+def test_figure_in_architecture_is_accepted(tmp_path: Path) -> None:
+    """Images are admitted as a class, not by filename.
+
+    A figure carries no prose, so unlike a stray .md it cannot become a second
+    authority on a fact — which is the only thing the closed shape prevents.
+    """
+    docs = build_docs(tmp_path)
+    (docs / "architecture" / "model-diagram.svg").write_text("<svg/>", encoding="utf-8")
+
+    assert check_docs.check_architecture(docs) == []
+
+
+def test_figure_in_version_folder_is_accepted(tmp_path: Path) -> None:
+    docs = tmp_path / "docs"
+    version_dir = build_version(docs)
+    (version_dir / "flow.png").write_bytes(b"\x89PNG\r\n")
+
+    problems = check_docs.check_version(version_dir, "v1-x")
+
+    assert not any("flow" in problem for problem in problems)
+
+
+def test_figure_in_modules_is_accepted(tmp_path: Path) -> None:
+    docs = build_docs(tmp_path)
+    modules = docs / "architecture" / "modules"
+    modules.mkdir()
+    (modules / "M03-auth.md").write_text("# auth\n", encoding="utf-8")
+    (modules / "M03-auth.svg").write_text("<svg/>", encoding="utf-8")
+
+    assert check_docs.check_architecture(docs) == []
+
+
+def test_non_image_file_extensions_are_still_reported(tmp_path: Path) -> None:
+    """Only real image suffixes pass — the exemption must not become a hole."""
+    docs = build_docs(tmp_path)
+    (docs / "architecture" / "notes.txt").write_text("x", encoding="utf-8")
+
+    problems = check_docs.check_architecture(docs)
+
+    assert any("notes.txt" in problem for problem in problems)
+
+
+def test_figure_link_resolves(tmp_path: Path) -> None:
+    """The point of allowing the figure is that a document can embed it."""
+    docs = build_docs(tmp_path)
+    (docs / "architecture" / "model-diagram.svg").write_text("<svg/>", encoding="utf-8")
+    (docs / "architecture" / "README.md").write_text(
+        "# architecture\n\n![总览](model-diagram.svg)\n", encoding="utf-8"
+    )
+
+    assert check_docs.check_links(docs)[1] == []
 
 
 def test_skill_root_is_the_directory_holding_skill_md() -> None:

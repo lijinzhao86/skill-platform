@@ -1,0 +1,23 @@
+-- Empties everything a test can write, and nothing else.
+--
+-- The seed rows of V2 — three users, three namespaces, three owner memberships — are identity
+-- data the tests read, not fixtures they create, so they stay. Everything below is created by
+-- publishing or deleting, and leaving it in place would make a test's result depend on which
+-- tests ran before it.
+--
+-- RESTART IDENTITY is conventional rather than required: no test asserts on a particular id, and
+-- every audit assertion counts rows instead. Resetting the counter only keeps a truncated table
+-- indistinguishable from a freshly migrated one, which is what makes a failing row readable.
+--
+-- Not truncated: namespace_member and the P1 auth tables (credential, identity, browser_session,
+-- oauth_client, auth_code, access_token, refresh_token). P0a never writes them, so emptying them
+-- would only move the database away from its migrated shape for no gain.
+TRUNCATE TABLE
+    blob_content,
+    version_file,
+    skill_version,
+    skill,
+    skill_stat,
+    audit_event,
+    blob
+RESTART IDENTITY CASCADE;

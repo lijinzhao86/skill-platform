@@ -1,7 +1,7 @@
 # v1-hosting · 产品需求
 
 > **最后更新**：2026-09-27
-> **状态**：需求已确认，**尚未实现**
+> **状态**：需求已确认。实现进度见 [`README.md`](README.md) §状态（此处不复述，同一个事实只有一个权威位置）。
 > **所属版本**：[`README.md`](README.md)
 
 <!--
@@ -56,8 +56,8 @@
 |---|---|---|
 | 1 | skill 托管：命名空间下的 skill 与不可变版本、内容寻址存储 | 服务端存储 + 写接口 |
 | 2 | 远程搜索：只返回 L1（`name` / `description` / `title`），服务端排序 | `GET /v1/skills` |
-| 3 | 远程读详情：返回 L1 + **完整文件清单，零内容** | `GET /v1/skills/{id}` |
-| 4 | 远程读正文（L2）与单个文件（L3） | `GET /v1/skills/{id}/body`、`/files/{relpath}` |
+| 3 | 远程读详情：返回 L1 + **完整文件清单，零内容** | `GET /v1/skills/{ns}/{name}[@版本]` |
+| 4 | 远程读正文（L2）与单个文件（L3） | `GET /v1/skills/{ns}/{name}[@版本]/body`、`/files/{relpath}` |
 | 5 | 网关 skill + 自研 CLI（`setup` / `login` / `search` / `show` / `get`） | 一份网关 skill + 一个 CLI |
 | 6 | 自建登录与令牌签发（OAuth 2.1 AS，**v1 的注册方式只做预注册**——客户端只有我们自己的 CLI；CIMD 到 P2 才需要，DCR 不启用，见 [ADR 0011](../../decisions/0011-server-and-cli-stack.md)） | 登录页 + 令牌接口 |
 

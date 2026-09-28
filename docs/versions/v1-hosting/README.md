@@ -1,7 +1,7 @@
 # v1-hosting · skill 托管与远程加载
 
-> **最后更新**：2026-09-27
-> **状态**：进行中（设计已定稿，**尚未实现**）
+> **最后更新**：2026-09-28
+> **状态**：进行中。设计已定稿；**服务端 P0a 与 P0c 都已实现**——skill 的地址是 `namespace/name[@版本]`（[ADR 0012](../../decisions/0012-addressing-and-version-pinning.md)），文档与代码在寻址上已经一致。CLI 与网关安装属 **P0b**，尚未实现。
 > **含收费**：否
 
 <!--
@@ -46,7 +46,7 @@ skill 全部活在服务端，**本地不留 skill 副本**；客户端侧只装
 | 文档 | 内容 |
 |---|---|
 | [`prd.md`](prd.md) | 用户与场景、范围、验收与指标、依赖与前置。**需求的权威来源** |
-| [`technical-design.md`](technical-design.md) | 系统架构、表结构、接口定义、分期与开放问题。**设计主体** |
+| [`technical-design.md`](technical-design.md) | 系统架构、表结构、接口定义、分期与开放问题。**设计主体**；概念模型已移到 [`architecture/`](../../architecture/README.md) |
 | [`test-plan.md`](test-plan.md) | 验收映射、用例（含成立条件的反证）、环境与数据、结果。**尚未执行** |
 | [`known-issues.md`](known-issues.md) | 首次提交（`c8a7362`）对**重写前基线代码**的审计：**条数与分布见该文件开头**，随架构重写一并处理 |
 | [`iterations/`](iterations/) | 小版本迭代记录（只增不改） |

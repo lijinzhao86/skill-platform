@@ -1,3 +1,87 @@
 spring:
   application:
     name: skillmaster-server
+
+  # PostgreSQL is the only state store — metadata, permissions, audit and the file bytes
+  # themselves (ADR 0010). There is no second datastore to configure.
+  datasource:
+    url: ${SKILLMASTER_DB_URL:jdbc:postgresql://localhost:5432/skillmaster}
+    # Defaults to the OS user, which is what a local Homebrew PostgreSQL expects. Deployment
+    # supplies both explicitly.
+    username: ${SKILLMASTER_DB_USER:${USER}}
+    password: ${SKILLMASTER_DB_PASSWORD:}
+
+  flyway:
+    locations: classpath:db/migration
+    # Never baseline an existing database automatically: a schema that Flyway did not build
+    # is a schema whose history we cannot vouch for.
+    baseline-on-migrate: false
+
+  # NOT the skill limit. That one is 512 files / 16 MiB uncompressed and is enforced by M5, which
+  # can say which file broke it. This is only a ceiling on how much is buffered before validation
+  # runs, and it is deliberately set above the largest payload a legal skill can produce — 16 MiB
+  # of content plus zip and multipart overhead — so that an over-limit skill is refused by the
+  # validator with a reason, rather than by the container with a bare 413.
+  servlet:
+    multipart:
+      max-file-size: 32MB
+      max-request-size: 32MB
+
+  # §4.2's wire format is snake_case. Set once here rather than annotated field by field: a
+  # forgotten annotation is a silently misnamed field, and this cannot be forgotten.
+  jackson:
+    property-naming-strategy: SNAKE_CASE
+
+server:
+  tomcat:
+    # How much of a refused body Tomcat will keep reading in order to be able to answer it at all.
+    # This is not a nicety: with the 2 MB default, a body over the multipart ceiling is refused
+    # *while the client is still uploading*, Tomcat gives up on the unread remainder, closes the
+    # connection, and the client sees a broken pipe instead of the 413 — which is indistinguishable
+    # from a network failure. Set above the ceiling so that a realistic mistake (a 35 MB zip) gets
+    # an answer. Past this, the connection is dropped, and that is the right response to a body
+    # that large.
+    max-swallow-size: 40MB
+
+skillmaster:
+  # The base URL clients reach this server at. Absolute URLs we publish are built from it —
+  # the resource_metadata parameter in the 401/403 challenges, and the address inside the
+  # gateway skill. It cannot be inferred from a request, because behind a proxy the request's
+  # own host is not the client's.
+  public-base-url: ${SKILLMASTER_PUBLIC_BASE_URL:http://localhost:8080}
+
+  auth:
+    # P0's single bearer token, and the user it acts as. No default for the token: a default
+    # would be a working credential committed to a public repository. Startup fails without it,
+    # which is the intended failure — an unset token otherwise looks like a broken client.
+    static-token: ${SKILLMASTER_AUTH_STATIC_TOKEN:}
+    # The `demo` user seeded by V2__seed_owner_and_namespaces.sql. An id, not a handle, so
+    # renaming the user cannot silently change who the token is (ADR 0004).
+    subject-user-id: ${SKILLMASTER_AUTH_SUBJECT_USER_ID:01M3HTG7GCCVBGRPAFFSVSF12W}
+
+  search:
+    # What a hit in each field is worth. §3.4 makes the ranking the product's core — the directory
+    # is not resident, so "there happens to be a skill for this" depends entirely on it — which is
+    # why these are configuration rather than constants: the numbers are a starting point to be
+    # tuned against real use, and tuning them should not need a release.
+    #
+    # They must not increase down the fields (name >= title >= description). RelevanceWeights
+    # refuses a configuration that violates that at startup, since a description hit outranking a
+    # name hit is always a mistake and would be nearly invisible in the results.
+    weights:
+      name: ${SKILLMASTER_WEIGHT_NAME:100}
+      title: ${SKILLMASTER_WEIGHT_TITLE:40}
+      description: ${SKILLMASTER_WEIGHT_DESCRIPTION:20}
+
+  gateway:
+    # The $schema declared in the V2 discovery index. Deliberately empty, and the honest value:
+    # §1.5 records that the URL lives under agentskills.io as the "v0.2.0 draft" and that it does
+    # not currently resolve, so the exact string is not verifiable from here. Empty means the field
+    # is omitted rather than filled with a guess — a wrong schema URL is worse than none, because a
+    # client that validates against it would reject a document that is otherwise fine.
+    # P0b's CLI check against a live `npx skills add` is what settles the real value.
+    index-schema-url: ${SKILLMASTER_GATEWAY_SCHEMA_URL:}
+
+# NOTE: this file IS Maven-filtered (spring-boot-starter-parent sets the resource delimiter to
+# '@'), so an '@' in any value here would be substituted at build time. Keep credentials in
+# environment variables rather than inlining a value that could contain one.

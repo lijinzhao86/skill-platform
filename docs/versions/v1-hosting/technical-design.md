@@ -32,10 +32,11 @@
 │   └─────────────────────────┘   └─────────────────────────────────────┘   │
 │                                                                            │
 │   ┌─ 检索 ───────────────┐      ┌─ 分发 ──────────────────────────────┐   │
-│   │ 只索引 L1            │      │ /v1/skills          （搜索）        │   │
-│   │ 搜索 / 排序 / 查找    │      │ /v1/skills/{id}     （详情+清单）    │   │
-│   └──────────────────────┘      │ /v1/skills/{id}/body       （L2）   │   │
-│                                 │ /v1/skills/{id}/files/{p}  （L3）   │   │
+│   │ 只索引 L1            │      │ /v1/skills              （搜索）    │   │
+│   │ 搜索 / 排序 / 查找    │      │ /v1/skills/{ns}/{name}[@v]          │   │
+│   └──────────────────────┘      │                    （详情+清单）    │   │
+│                                 │   …/body           （L2）           │   │
+│                                 │   …/files/{p}      （L3）           │   │
 │                                 │ /.well-known/...  （只发布网关）     │   │
 │                                 └─────────────────────────────────────┘   │
 └───────────────────────────────────┬────────────────────────────────────────┘
@@ -141,9 +142,9 @@
 
 | 扩展机制 | 我们的接口 |
 |---|---|
-| `skills/list` → `frontmatter` + `uri` + 完整文件清单 | `GET /v1/skills`（搜索）+ `GET /v1/skills/{id}`（清单） |
-| `resources/read` on `skill://<name>/SKILL.md` | `GET /v1/skills/{id}/body` |
-| `resources/read` on 清单里的每个 URI | `GET /v1/skills/{id}/files/{relpath}` |
+| `skills/list` → `frontmatter` + `uri` + 完整文件清单 | `GET /v1/skills`（搜索）+ `GET /v1/skills/{ns}/{name}[@v]`（清单） |
+| `resources/read` on `skill://<name>/SKILL.md` | `GET /v1/skills/{ns}/{name}[@v]/body` |
+| `resources/read` on 清单里的每个 URI | `GET /v1/skills/{ns}/{name}[@v]/files/{relpath}`——**清单每项自带这条 `uri`** |
 
 **规范中我们直接采用的条款**（原文）：
 
@@ -308,16 +309,18 @@ agent 读网关正文（L2，本地）→ 知道服务地址与调用协议
    ↓
 CLI search "<关键词>"  →  GET /v1/skills?q=...   （只返回 L1 卡片）
    ↓
-挑中一个 → CLI show <id>  →  GET /v1/skills/{id}  （L1 + 文件清单，零内容）
+挑中一个 → CLI show <ns>/<name>  →  GET /v1/skills/{ns}/{name}
+   ↓                                  （L1 + 文件清单，零内容；响应里把版本解析成 @3 并钉住）
+判断正文相关 → CLI get <ns>/<name>@3  →  GET /v1/skills/{ns}/{name}@3/body   （L2）
    ↓
-判断正文相关 → CLI get <id>  →  GET /v1/skills/{id}/body   （L2）
-   ↓
-正文引用了某个文件 → CLI get <id> <relpath>  →  GET .../files/{relpath}  （L3）
+正文引用了某个文件 → CLI get <ns>/<name>@3 <relpath>  →  …/files/{relpath}  （L3）
    ↓
 agent 依 skill 指示完成任务
 ```
 
 **服务端在接口层强制分层**：搜索接口物理上拿不到正文，正文接口拿不到文件，文件接口只给单个文件。**这就是渐进加载的落实方式**——不靠模型自觉，靠接口形状。
+
+**`@3` 是从详情的 `uri` 里抄来的，不是 agent 自己拼的。** 第二步没写版本（等于 `latest`），响应把它解析出来并写进每个文件的 `uri`；后面两步照抄。这样「一次任务里版本钉死」不需要服务端记任何东西——中间谁发布了 `@4` 都不影响，因为后续请求**没有再问过 latest**（[ADR 0012](../../decisions/0012-addressing-and-version-pinning.md)）。
 
 ### 2.4 代码仓库布局
 
@@ -339,16 +342,67 @@ agent 依 skill 指示完成任务
 3. **`gateway/` 是跨子项目的，所以它不放在任何子项目目录里。** 服务端要它（`GET /gateway/SKILL.md`、发布到 well-known），CLI 也要它（`setup` 装它）。它同时是一个 skill 目录——标准要求目录名等于 `name`（§1.1），所以是 `gateway/skillmaster/`；直接放在仓库根下会得到 `skillmaster/skillmaster/`。名字用 `gateway` 而不是 `skills`：复数会暗示这里有一堆 skill，而实际永远只有 §4.5 那一个。
 4. **Dockerfile 跟着它构建的东西走。** 服务端镜像的定义在 `skillmaster-server/Dockerfile`，不在仓库根的 `.cicd/`。构建上下文**仍是仓库根**（镜像要一并带上 `gateway/`），由 `.dockerignore` 收敛；服务端的 workflow 因此也在 `gateway/**` 变化时触发。
 
+### 2.5 逻辑模块
+
+§2.2 的「组件」是**运行时单位**——它回答「哪些东西跑在同一个进程里」。这一节是**业务逻辑的切分**：每个模块有自己的表、自己的不变量、自己承载的接口。两者不是一回事：`Blob Store` 与 `Blob GC` 在 §2.2 里是两个组件，而逻辑上「按 sha256 存字节」属于 M6、「引用计数回收」属于 M7——后者还受 §3.3 点 5 那条「与版本变更同事务」的约束。
+
+**11 个模块，外加一层用例编排。**
+
+| # | 模块 | 职责 | 拥有（表 / 接口） | 分期 |
+|---|---|---|---|---|
+| M1 | 账号登录 | 注册、登录、登出、凭据、浏览器会话 | `app_user`、`credential`、`browser_session`、`identity`；`/login`、`/logout` | P1 |
+| M2 | 令牌与 AS | 授权、签发、刷新、撤销、发现端点、客户端查找 | `oauth_client`、`auth_code`、`access_token`、`refresh_token`；`/oauth/*`、`/.well-known/oauth-authorization-server`、`/.well-known/oauth-protected-resource`、`/.well-known/jwks.json` | P1 |
+| M3 | 请求鉴权 | 校验 Bearer、取出 subject 与 scope、401/403 的 MCP 形状 | 无表；横切 `/v1/**` 与 `WWW-Authenticate` 形状 | **P0** |
+| M4 | 命名空间与权限 | 个人命名空间生命周期、保留 slug、受权判定、可见性过滤 | `namespace`、`namespace_member` | P0（所有者）/ P1（可见性） |
+| M5 | 上传与校验 | 接收上传物、完整 YAML 解析 frontmatter、路径 / 大小 / 符号链接校验 | 无表；产物是「一批 (relpath, bytes)」 | P0 |
+| M6 | 内容寻址存储 | 按 sha256 存 / 取字节、天然去重 | `blob`、`blob_content` | P0 |
+| M7 | 版本与发布 | digest、不可变版本、幂等发布、当前版本指针、软删 / 恢复 / 回滚、引用计数 GC | `skill`、`skill_version`、`version_file` | P0（发布、软删）/ P2（回滚、版本历史） |
+| M8 | 检索与排序 | 索引维护（只 L1 三字段）、查询、所有权过滤、可解释排序 | `GET /v1/skills`；索引物理形态待定（§8 问题 3） | P0（启发式）/ P2（用上 `skill_stat`） |
+| M9 | 分发 | 详情 + 文件清单（零内容）、正文 L2、单文件 L3 | `GET /v1/skills/{ns}/{name}[@版本]`、`/body`、`/files/{relpath}` | P0 |
+| M10 | 审计与统计 | 留痕、计数 | `audit_event`、`skill_stat` | P0（审计）/ P1（统计） |
+| M11 | 网关发布与发现 | well-known 两条路径的索引、逐文件拉取、`/gateway/SKILL.md`；把仓库 `gateway/` 灌进保留命名空间 | §4.5 那 4 个端点；**不拥有表**，取字节调 M6 / M7 | P0 |
+| — | **用例层** | 每个对外用例一个编排者；**跨模块事务的边界在这里划定** | 无表 | P0 起 |
+| — | **基础约定**（非模块） | 迁移、连接池、游标分页、错误形状、配置 | — | P0 |
+
+**跨模块用例至少有四条**：注册（M1 + M4，必须同事务写 `app_user` + `namespace` + `namespace_member`）、发布（M5 → M6 → M7 → M10）、读详情（M3 → M4 → M7 → M9）、搜索（M3 → M4 → M8）。
+
+**三条依赖规则**（都可用包边界加测试检查）：
+
+1. **一个模块只能读写自己拥有的表。** 跨模块取数必须经对方接口。
+2. **跨模块的事务边界只能由用例层划定。** 模块内部自己的不变量可以有自己的事务——例如 M7 的 GC 必须与版本变更同事务（§3.3 点 5）。
+3. **禁止循环依赖。**
+
+#### 规则①的落法：表的所有者执行，另一个模块只出谓词
+
+上面那张表把**职责**和**表**分给了不同模块，于是规则①在上面的职责划分下会自相矛盾。实现期撞到三次，每次都按同一条落法解决——记在这里，因为再遇到时不该重新讨论：
+
+| 冲突 | 落法 |
+|---|---|
+| M7 的「引用计数 GC」要删 M6 的 `blob` | M6 出 `BlobStore.deleteUnreferenced(Set<String>)`；M7 从自己的 `version_file` 算出「仍被引用的 hash 集合」传过去 |
+| M4 判断个人命名空间要读 M1 的 `app_user.handle` | M1 开只读接缝 `AccountDirectory.handleOf(userId)`，M4 依赖 M1 |
+| M8 的搜索要读 M7 的 `skill`/`skill_version` | M7 出只读 catalog 接缝（`SkillCatalogService.page(...)`）；M8 只出谓词（pattern、权重、排序身份、游标），**不持有任何 SQL** |
+
+**判据是一句话：一条 SQL 语句不得同时点两个模块的表。** 让所有者执行、另一模块传普通值（`Set`/`int`/`String`），接口里就不会出现对方模块的类型，也就不会产生循环依赖。
+
+配套的一条，同样来自分层规则：**`config` 层不得被任何模块访问**，所以模块需要的配置值必须由 `config` 造好成 bean 传进去（`config/RankingConfig` 造 M8 的权重、`config/GatewayConfig` 造 M11 的设置），模块不能直接读配置。
+
+> **待补**：M1 的**注册**用例在 §4.4 的接口表里没有对应条目——表里只有 `/login` 与 `/logout`，而 [`prd.md`](prd.md) §验收与指标 第 1 条要求走通「注册 → 登录 → 拿到令牌」。补 §4.4 时一并补上。
+
 ---
 
 ## 第 3 章 · 领域模型与表结构
 
 引擎是 **PostgreSQL**（[ADR 0010](../../decisions/0010-storage-in-postgres.md)）——它是本项目**唯一**的状态存储，元数据、权限、审计与**文件字节**都在里面。时间一律 RFC3339 UTC 字符串；主键一律 ULID（不透明、可按时间排序、无自增泄露）。
 
+> **先看概念模型**：本章写的是**表结构**（DDL 意图）。实体之间的关系、**每个实体的身份是什么**、四层粒度（字节 / 文件 / 版本 / skill）为什么各有各的 id、以及如何寻址——在 [`architecture/model.md`](../../architecture/model.md)（**已移出版本文档，架构不随版本变**）。两者分工是：模型讲「有哪些东西、各自的身份是什么」，本章讲「落到表上长什么样」。**身份混淆（尤其是把版本序号当成版本身份）是这里最容易犯的错，模型那篇专门讲这个。**
+
 ### 3.1 身份与鉴权
 
+> **表名是 `app_user`，不是 `user`。** `user` 是 PostgreSQL 的保留字，`CREATE TABLE user` 直接是
+> 语法错误——本文档早先的 DDL 就是这么写的，实现时才暴露。只改表名，字段与语义不变。
+
 ```sql
-CREATE TABLE user (
+CREATE TABLE app_user (
   id           TEXT PRIMARY KEY,              -- ULID
   handle       TEXT NOT NULL UNIQUE,          -- 登录名，也用作个人命名空间的 slug
   display_name TEXT NOT NULL DEFAULT '',
@@ -358,7 +412,7 @@ CREATE TABLE user (
 );
 
 CREATE TABLE credential (                     -- 自建登录
-  user_id     TEXT NOT NULL REFERENCES user(id) ON DELETE CASCADE,
+  user_id     TEXT NOT NULL REFERENCES app_user(id) ON DELETE CASCADE,
   type        TEXT NOT NULL,                  -- password | totp
   secret_hash TEXT NOT NULL,
   updated_at  TEXT NOT NULL,
@@ -368,7 +422,7 @@ CREATE TABLE credential (                     -- 自建登录
 CREATE TABLE identity (                       -- 预留 SSO，成本为零
   provider    TEXT NOT NULL,                  -- lark | github | google
   external_id TEXT NOT NULL,
-  user_id     TEXT NOT NULL REFERENCES user(id) ON DELETE CASCADE,
+  user_id     TEXT NOT NULL REFERENCES app_user(id) ON DELETE CASCADE,
   linked_at   TEXT NOT NULL,
   PRIMARY KEY (provider, external_id)
 );
@@ -379,7 +433,7 @@ CREATE TABLE identity (                       -- 预留 SSO，成本为零
 ```sql
 CREATE TABLE browser_session (                -- 登录页的浏览器会话
   session_id TEXT PRIMARY KEY,
-  user_id    TEXT NOT NULL REFERENCES user(id) ON DELETE CASCADE,
+  user_id    TEXT NOT NULL REFERENCES app_user(id) ON DELETE CASCADE,
   expires_at TEXT NOT NULL,
   created_at TEXT NOT NULL
 );
@@ -398,7 +452,7 @@ CREATE TABLE oauth_client (
 CREATE TABLE auth_code (
   code_hash      TEXT PRIMARY KEY,
   client_id      TEXT NOT NULL REFERENCES oauth_client(client_id),
-  user_id        TEXT NOT NULL REFERENCES user(id),
+  user_id        TEXT NOT NULL REFERENCES app_user(id),
   redirect_uri   TEXT NOT NULL,
   scope          TEXT NOT NULL,
   code_challenge TEXT NOT NULL,
@@ -411,7 +465,7 @@ CREATE TABLE auth_code (
 CREATE TABLE access_token (
   token_hash TEXT PRIMARY KEY,                -- 只存哈希，永不存明文
   client_id  TEXT NOT NULL,
-  user_id    TEXT NOT NULL REFERENCES user(id),
+  user_id    TEXT NOT NULL REFERENCES app_user(id),
   scope      TEXT NOT NULL,
   audience   TEXT NOT NULL,                   -- 必须校验
   expires_at TEXT NOT NULL,
@@ -423,7 +477,7 @@ CREATE INDEX idx_at_expiry ON access_token(expires_at);
 CREATE TABLE refresh_token (
   token_hash   TEXT PRIMARY KEY,
   client_id    TEXT NOT NULL,
-  user_id      TEXT NOT NULL REFERENCES user(id),
+  user_id      TEXT NOT NULL REFERENCES app_user(id),
   scope        TEXT NOT NULL,
   expires_at   TEXT NOT NULL,
   revoked_at   TEXT,
@@ -445,14 +499,14 @@ CREATE TABLE namespace (
   id            TEXT PRIMARY KEY,
   slug          TEXT NOT NULL UNIQUE,         -- URL 里用
   title         TEXT NOT NULL DEFAULT '',
-  owner_user_id TEXT NOT NULL REFERENCES user(id),
+  owner_user_id TEXT NOT NULL REFERENCES app_user(id),
   visibility    TEXT NOT NULL DEFAULT 'private', -- public | unlisted | private
   created_at    TEXT NOT NULL
 );
 
 CREATE TABLE namespace_member (
   namespace_id TEXT NOT NULL REFERENCES namespace(id) ON DELETE CASCADE,
-  user_id      TEXT NOT NULL REFERENCES user(id) ON DELETE CASCADE,
+  user_id      TEXT NOT NULL REFERENCES app_user(id) ON DELETE CASCADE,
   role         TEXT NOT NULL,                 -- owner | editor | viewer（v1 只写 owner）
   added_at     TEXT NOT NULL,
   PRIMARY KEY (namespace_id, user_id)
@@ -479,7 +533,7 @@ CREATE TABLE skill (
   frontmatter        TEXT NOT NULL,           -- 原始 frontmatter（JSON，透传未知字段）
   visibility         TEXT NOT NULL DEFAULT 'private',
   current_version_id TEXT,                    -- 指向当前版本
-  created_by         TEXT NOT NULL REFERENCES user(id),
+  created_by         TEXT NOT NULL REFERENCES app_user(id),
   created_at         TEXT NOT NULL,
   updated_at         TEXT NOT NULL,
   deleted_at         TEXT,                    -- 软删
@@ -491,14 +545,16 @@ CREATE INDEX idx_skill_vis ON skill(visibility)   WHERE deleted_at IS NULL;
 CREATE TABLE skill_version (
   id           TEXT PRIMARY KEY,
   skill_id     TEXT NOT NULL REFERENCES skill(id) ON DELETE CASCADE,
+  number       INTEGER NOT NULL,              -- 这个 skill 的第 N 份不同内容；永不重用（ADR 0012）
   digest       TEXT NOT NULL,                 -- 文件集合的确定性摘要
   file_count   INTEGER NOT NULL,
   total_bytes  INTEGER NOT NULL,
   changelog    TEXT NOT NULL DEFAULT '',
   source       TEXT NOT NULL DEFAULT '',      -- 来源描述（上传/zip/git url）
-  published_by TEXT NOT NULL REFERENCES user(id),
+  published_by TEXT NOT NULL REFERENCES app_user(id),
   published_at TEXT NOT NULL,
-  UNIQUE (skill_id, digest)                   -- 幂等发布：同样内容不产生新版本
+  UNIQUE (skill_id, digest),                  -- 幂等发布：同样内容不产生新版本
+  UNIQUE (skill_id, number)                   -- 序号是不可变别名，不是身份
 );
 CREATE INDEX idx_ver_skill ON skill_version(skill_id, published_at DESC);
 
@@ -520,19 +576,29 @@ CREATE TABLE blob (                           -- 只有元数据行，字节不�
 -- 字节单独一张表，并放在单独的表空间（ADR 0010 决定 2）：这样它与元数据可以分开备份
 -- （元数据小可频繁备，字节大走低频备），blob 的页也不会把元数据的页挤出 shared_buffers。
 -- 主键就是 sha256 —— 「字节存在哪」由 BlobStore.get/put(sha256) 那层接口挡住，表结构不是接缝。
+--
+-- 这里**没有** TABLESPACE 子句，与本文早先的写法不同：表空间必须先存在才能被引用，而
+-- CREATE TABLESPACE 需要超级用户，所以它不能出现在迁移脚本里。搬表是部署步骤：
+--   ALTER TABLE blob_content SET TABLESPACE blob_ts;
+-- 未验证：阿里云 RDS 是否允许用户表空间（见第 8 章）。
 CREATE TABLE blob_content (
   sha256  TEXT PRIMARY KEY REFERENCES blob(sha256) ON DELETE CASCADE,
   bytes   BYTEA NOT NULL
-) TABLESPACE blob_ts;                         -- 表空间由部署时创建
+);
 ```
 
 **五个关键设计点**：
 
 1. **`id` 是身份，`name` 是属性。** 改名只 `UPDATE skill.name`，不影响任何引用、任何已发出的 URL、任何审计记录。这就是选不透明主键而非 `(owner, name)` 的理由。
-2. **`UNIQUE(skill_id, digest)` 直接实现幂等发布**——同样内容重复发布不产生新版本。这也是"内容不变 → digest 不变"这条不变量的落点。
-3. **manifest 就是 `version_file` 的投影**，按 `relpath` 字典序排序即规范要求的确定性顺序。**顺序必须显式排序，不能依赖数据库返回顺序。**
+2. **`UNIQUE(skill_id, digest)` 直接实现幂等发布**——同样内容重复发布不产生新版本。这也是"内容不变 → digest 不变"这条不变量的落点。实现上必须是 `ON CONFLICT DO NOTHING`，**不能**靠捕获唯一约束异常：PostgreSQL 下一个报错会中止整个事务，捕获它等于毒化这次发布。
+   **`number` 是这一条的配套，不是它的替代**（[ADR 0012](../../decisions/0012-addressing-and-version-pinning.md)）：序号是「这个 skill 的第 N 份**不同**内容」，所以**重发相同内容不消耗号码**——否则同一个 digest 会拿到两个号，幂等就死了。`UNIQUE(skill_id, number)` 让号码永不重用，于是 `@3` 永远指向同一份内容，它等价于 git 的 tag 而不是分支。分配不需要新的并发机制：发布时 `upsertLive` 已经对 `skill` 行做过 `DO UPDATE`、持有那行的锁，同一个事务里取 `max(number)+1` 天然串行。
+3. **manifest 就是 `version_file` 的投影**，按 `relpath` 字典序排序即规范要求的确定性顺序。**顺序必须显式排序，不能依赖数据库返回顺序。** 而且「按 relpath 排序」有歧义——Java 的 `String.compareTo`（UTF-16 码元）、PostgreSQL 默认 collation、`COLLATE "C"`（UTF-8 字节）是三种不同顺序，在普通 ASCII 标点上就会分叉。**digest 与 HTTP 清单必须用同一个顺序**，所以排序在 Java 里用一个显式比较器算一次，两边共用，查询不负责排序。
 4. **`frontmatter` 存原始 JSON 并透传未知字段。** 飞书的 `metadata.requires.bins` 是嵌套的，现有 `parse_frontmatter` 会丢——必须换更完整的 YAML 解析，且**解析失败不得静默降级**。
-5. **`blob` 只增，删除版本不立刻删 blob**（可能被其他版本引用），靠后台 GC 比对引用计数——而且这次回收**必须与版本变更在同一个事务里完成**，否则会留下「字节还在、引用没了」或反过来的窗口（[ADR 0010](../../decisions/0010-storage-in-postgres.md)）。内容寻址天然去重——不同 skill 共享同一份 `references/` 时只存一份。
+5. **`blob` 只增，删除版本不立刻删 blob**（可能被其他版本引用），靠 GC 比对引用计数——而且这次回收**必须与版本变更在同一个事务里完成**，否则会留下「字节还在、引用没了」或反过来的窗口（[ADR 0010](../../decisions/0010-storage-in-postgres.md)）。内容寻址天然去重——不同 skill 共享同一份 `references/` 时只存一份。
+   **P0 的实际答案是「版本变更时清扫、不延迟、不归档」，且 P0 一次都删不掉东西**：软删只置 `deleted_at`，`skill_version`/`version_file` 行都还在，所以没有 blob 失去引用。接缝存在是为了 P2 的版本裁剪有落点。
+
+**`relpath` 的取值规范**（P0 定的最小集，上传校验按此执行）：POSIX 分隔符 `/`；不以 `/` 开头、不含 `..` 段、不含反斜杠、不含空段；大小写敏感；允许非 ASCII。这些由 M5 在解压时逐项强制，**符号链接项一律拒绝**——一个 zip 把符号链接存成普通条目加一个 unix mode，跟随它就会发布作者没上传过的字节。
+
 
 **digest 算法（必须确定性）**：
 
@@ -562,13 +628,20 @@ CREATE TABLE skill_stat (
 
 **只索引 L1**（标准的 `name` + `description`，外加平台自己的 `title` 元数据字段），**绝不索引正文或文件**。这既是性能考虑，也是安全约束：正文一旦进全文索引，就可能通过片段检索被反推出来。
 
-**排序公式（P0，必须可解释）**：
+**排序（P0 已定，必须可解释）**：结果按一个**元组**比较，而不是按一个加权总分：
 
 ```
-score = w1 * text_relevance + w2 * freshness(updated_at) + w3 * manual_weight
+ORDER BY relevance DESC, updated_at DESC, id ASC
+
+relevance = 100·命中 name + 40·命中 title + 20·命中 description
 ```
 
-**`text_relevance` 的具体算法随索引形态一并待定**——原计划写死的「FTS5 bm25」在中文上拿不到。但它必须满足下文那三条要求：**可解释、可调、可回归测试**。P0 没有使用数据，只能用文本相关性 + 新鲜度 + 人工权重；`skill_stat` 是为 P1 的排序准备的。**排序质量在这个模型下就是产品的核心**——目录不常驻，「这个任务正好有个 skill 能用」完全靠它。
+三个权重是配置（`skillmaster.search.weights`，实现时定），可调而不必发版；`RelevanceWeights` 在启动时拒绝「命中 description 比命中 name 还重」这类配置。命中按字段相加——同时命中三个字段的排在只命中 name 的前面，这是有意的读法：每个字段是独立证据。
+
+**为什么不是加权总分。** 早先的写法是 `w1·relevance + w2·freshness + w3·manual`，那样分数里会含 `now()`。含当前时间的分数在两次求值之间会变，于是**游标携带的 keyset 就不再是它签发时的那个值**——翻页会静默地跳过或重复行，而响应里没有任何东西表明这件事发生了。元组没有这个问题：每个分量要么是存储的列，要么是存储列的函数。新鲜度因此降级成**同一 tier 内的破平局项**，不需要时钟参与比较，表达的意图反而更直接。
+
+**`text_relevance` 的具体算法仍随索引形态待定**——原计划写死的「FTS5 bm25」在中文上拿不到。P0 的实现是 `LIKE '%词%'`（`pg_bigm` 是 GIN 索引、加速同样的 `LIKE`，但不给相关性分数，所以它是纯索引优化、后置）。**`LIKE` 解决的是延迟不是排序**，所以上面这套排序是独立于索引形态的、P0 必须自己定死才有的可回归。`manual_weight` 与 `skill_stat` 仍留给 P1/P2——P0 没有使用数据。
+**排序质量在这个模型下就是产品的核心**——目录不常驻，「这个任务正好有个 skill 能用」完全靠它。
 
 ### 3.5 审计
 
@@ -594,11 +667,43 @@ skill 的内容会被客户端取走、在客户端环境里使用，事后追�
 ### 4.1 通用约定
 
 - 基址 `https://<host>/v1`
+- **skill 的地址是 `namespace/name`，不是 `id`**（[ADR 0012](../../decisions/0012-addressing-and-version-pinning.md)）。`id` 仍是主键与内部身份，只是不出现在 URL 里。v1 里每个用户只有一个个人命名空间，所以第一段读作自己的 handle。
+- **版本用 `@` 后缀**，三种写法，省略即 `latest`：
+
+  | 写法 | 含义 |
+  |---|---|
+  | `demo/feishu-tasks` | `latest`——每次请求重新解析，会漂 |
+  | `demo/feishu-tasks@3` | 钉在第 3 版。序号是不可变别名，`@3` 永远指向同一份内容 |
+  | `demo/feishu-tasks@sha256:…` | 钉在内容上。搜索卡片与详情都带 `digest`，所以这个形式不需要额外请求 |
+
+  **凡是这个地址解析不出东西，一律 `404` 加同一个错误码 `skill_not_found`**：没有这个 skill、不是你的、skill 已软删、版本号或 digest 不存在——四种情况一个答案。这是 §4.1 下面那条原则的延伸：**地址不解析就没有更多可说的**，多一个码就多一处可以用来探测的信息。
+  **实现上「skill 活着」和「版本存在」是两个条件，都要查。** 不能写成「版本行还在就发」——软删之后 `skill_version`/`version_file` 行**都还在**（§3.3 点 5），写漏了就变成「删了还能读到」。
 - **认证**：每个请求带 `Authorization: Bearer <access_token>`。**令牌绝不放在 query string**（规范要求，也防日志泄露）。
 - **未认证/令牌无效** → `401` + `WWW-Authenticate: Bearer resource_metadata="https://<host>/.well-known/oauth-protected-resource"`
 - **scope 不足** → `403` + `WWW-Authenticate: Bearer error="insufficient_scope", scope="...", resource_metadata="..."`
 - **分页**：`?limit=&cursor=`，响应带 `next_cursor`（不透明游标，不用 offset）
 - **时间**：RFC3339 UTC
+
+**错误信封**（P0 新增；上文只定了 401/403 的**响应头**，正文形状此前是空的）：
+
+```json
+{"error": {"code": "invalid_upload", "message": "…",
+           "details": [{"field": "files[3].relpath", "issue": "path_traversal"}]}}
+```
+
+| `code` | 何时 |
+|---|---|
+| `unauthenticated` | 无令牌或令牌无效（401） |
+| `insufficient_scope` | 令牌有效但 scope 不足（403） |
+| `invalid_request` | 参数或状态不合法（400）：`limit<1`、游标读不懂、发布到已软删的名字 |
+| `invalid_upload` | 上传被 M5 拒绝（400），或请求体超过 multipart 上限（413） |
+| `skill_not_found` | 不存在**或**无权（404）——**同一个码、同一个状态** |
+| `file_not_found` | 清单里没有这个 `relpath`（404） |
+| `internal_error` | 服务端异常（500） |
+
+**「不存在」与「无权限」必须同码同状态**：403 会确认 skill 存在，而 404 不会。实现上这不做成两个分支——所有权谓词写在找到该行的同一条 SQL 里，于是「不是你的」和「没有这个」结构上就是同一个空结果，没有可以写漏的第二个判断。
+
+`details` 只在字段级错误上出现，非空时形如 `[{field, issue}]`，一次给全而不是只给第一个——作者修一个 skill 不必来回试。
 
 **为什么连纯 API 也照 MCP 的错误形状来**：将来加 MCP 适配器时不用改错误语义，客户端也不会遇到"两套 401"。
 
@@ -619,9 +724,10 @@ skill 的内容会被客户端取走、在客户端环境里使用，事后追�
 ```json
 {
   "skills": [
-    { "id": "01J...", "name": "pdf-tools", "title": "PDF 工具",
-      "description": "…", "namespace": "alice", "visibility": "private",
-      "digest": "sha256:…", "updated_at": "2026-09-26T10:00:00Z" }
+    { "id": "01J...", "namespace": "alice", "name": "pdf-tools", "title": "PDF 工具",
+      "description": "…", "visibility": "private",
+      "version": { "number": 3, "digest": "sha256:…" },
+      "updated_at": "2026-09-26T10:00:00Z" }
   ],
   "next_cursor": null
 }
@@ -629,57 +735,93 @@ skill 的内容会被客户端取走、在客户端环境里使用，事后追�
 
 **只返回 L1 字段**：不含正文、不含文件清单、不含文件内容。这是渐进加载的第一道闸。
 
-#### `GET /v1/skills/{id}` —— 详情 + 文件清单（零内容）
+**卡片带 `id` 是为了让客户端能钉版，不是为了寻址**——`id` 不出现在 URL 里。`version.digest` 让 agent **只调用一次搜索**就能钉到内容级（`@sha256:…`），不必先取 latest 再钉。
+
+#### `GET /v1/skills/{namespace}/{name}[@version]` —— 详情 + 文件清单（零内容）
 
 ```json
 {
-  "id": "01J...", "name": "pdf-tools", "title": "PDF 工具",
-  "description": "…",
-  "namespace": { "slug": "alice", "title": "个人" },
+  "id": "01J...", "namespace": { "slug": "alice", "title": "个人" },
+  "name": "pdf-tools", "title": "PDF 工具", "description": "…",
   "visibility": "private",
   "frontmatter": { "name": "pdf-tools", "description": "…", "metadata": { "…": "原样透传" } },
   "version": {
-    "digest": "sha256:…", "published_at": "2026-09-26T10:00:00Z",
-    "file_count": 25, "total_bytes": 364869
+    "number": 3, "digest": "sha256:…", "published_at": "2026-09-26T10:00:00Z",
+    "file_count": 25, "total_bytes": 364869,
+    "is_latest": true
   },
   "files": [
-    { "relpath": "SKILL.md", "sha256": "sha256:…", "size": 15251, "is_binary": false },
-    { "relpath": "references/checklist.md", "sha256": "sha256:…", "size": 4096, "is_binary": false }
+    { "relpath": "SKILL.md",
+      "uri": "/v1/skills/alice/pdf-tools@3/files/SKILL.md",
+      "sha256": "sha256:…", "size": 15251, "is_binary": false },
+    { "relpath": "references/checklist.md",
+      "uri": "/v1/skills/alice/pdf-tools@3/files/references/checklist.md",
+      "sha256": "sha256:…", "size": 4096, "is_binary": false }
   ],
-  "resources": {
-    "body": "/v1/skills/{id}/body",
-    "file": "/v1/skills/{id}/files/{relpath}"
-  }
+  "resources": { "body": "/v1/skills/alice/pdf-tools@3/body" }
 }
 ```
 
-**这是整个设计的枢纽**：给出**完整文件清单但零内容**——正是 MCP 扩展里 `skills/list` 的 `resources` 语义（"清单让客户端无需下载即可枚举 L3"）。`resources` 给的是模板化 URL，agent 据此按需取。它让 agent 能**在不取任何内容的前提下**判断"这个 skill 里有没有我要的东西"。
+**这是整个设计的枢纽**：给出**完整文件清单但零内容**——正是 MCP 扩展里 `skills/list` 的语义（"清单让客户端无需下载即可枚举 L3"）。它让 agent 能**在不取任何内容的前提下**判断"这个 skill 里有没有我要的东西"。
+
+**请求里没写版本时，响应把它解析出来并钉住**（`version.number`），**每个文件带一条已经钉好版本的 `uri`**。于是钉版不需要任何机制：
+
+> **从入口进一次，之后只跟着清单给的 URL 走。**
+
+agent 照抄 `uri`，而那些 `uri` 里已经写着 `@3`。中间谁发布了 `@4` 都不影响它——不是服务端记住了什么，而是它**根本没再问过 latest**。反过来，**「每次调用都从入口进」就是每次重新解析，任务中途会漂**，漂的结果是清单与字节对不上且不报错（[ADR 0012](../../decisions/0012-addressing-and-version-pinning.md) §背景 记的就是这个漏洞）。
+
+**每项带 `uri` 是外部硬要求**，不是我们的选择：§1.5 记的 MCP 扩展明确要求清单「每项带 URI、SHA-256 digest、字节大小」。此前只有 `relpath` 加一个 `{relpath}` 模板，两个都能拼出同一个 URL——**留一个，不留两个**，否则就是第二个真相来源。
+
+**服务端不记忆任何东西。**「在这一次任务里版本钉死」是客户端携带数据的结果，不是会话——服务端不知道什么是「一次任务」（[ADR 0012](../../decisions/0012-addressing-and-version-pinning.md) §理由）。
 
 **可见性过滤在服务端算**：`private`/`unlisted` 的 skill，无权者得到 `404`（不是 `403`——不泄露存在性）。
 
-#### `GET /v1/skills/{id}/body` —— L2
+#### `GET /v1/skills/{namespace}/{name}[@version]/body` —— L2
 
 返回**原始 SKILL.md 字节**（含 frontmatter），`Content-Type: text/markdown`。不做任何改写——托管要保真。
 
-#### `GET /v1/skills/{id}/files/{relpath}` —— L3
+#### `GET /v1/skills/{namespace}/{name}[@version]/files/{relpath}` —— L3
 
 返回**单个文件的原始字节**，`Content-Type` 按扩展名（未知则 `application/octet-stream`）。
 
-**必须实现的约束：`relpath` 必须精确匹配当前版本 manifest 里的某一项，否则 `404`。** 绝不能用 `relpath` 直接拼路径去读磁盘——那是路径穿越漏洞。这一条要写成测试。
+**必须实现的约束：`relpath` 必须精确匹配所请求版本 manifest 里的某一项，否则 `404`。** 绝不能用 `relpath` 直接拼路径去读磁盘——那是路径穿越漏洞。这一条要写成测试。
+
+**L2/L3 的 `@version` 由清单给出，不由客户端自己拼**——见上。钉住之后 `version_file` 不可变，所以清单里的 `sha256` 与取回的字节永远一致，客户端可以逐字节校验。
 
 ### 4.3 写接口（管理）
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
 | `POST` | `/v1/skills` | 发布新 skill（上传目录树 / zip / git 源） |
-| `POST` | `/v1/skills/{id}/versions` | 发布新版本 |
-| `PATCH` | `/v1/skills/{id}` | 改元数据（title / description / visibility） |
-| `DELETE` | `/v1/skills/{id}` | 软删 |
-| `POST` | `/v1/skills/{id}/restore` | 恢复 |
-| `GET` | `/v1/skills/{id}/versions` | 版本历史 |
-| `POST` | `/v1/skills/{id}/rollback` | 回滚（指针前移，不删版本） |
+| `POST` | `/v1/skills/{namespace}/{name}/versions` | 发布新版本 |
+| `PATCH` | `/v1/skills/{namespace}/{name}` | 改元数据（title / description / visibility） |
+| `DELETE` | `/v1/skills/{namespace}/{name}` | 软删 |
+| `POST` | `/v1/skills/{namespace}/{name}/restore` | 恢复 |
+| `GET` | `/v1/skills/{namespace}/{name}/versions` | 版本历史 |
+| `POST` | `/v1/skills/{namespace}/{name}/rollback` | 回滚（指针前移，不删版本） |
+
+写接口一律**不接受版本后缀**：它们作用在 skill 这个实体上，版本由操作本身产生或移动。唯一例外是回滚，它需要一个目标——那个目标写在请求体里（用序号或 digest），不写进路径。
 
 **元数据变更不产生新版本**（`title`/`description`/`visibility` 不在 skill 文件内），但会触发搜索索引更新。
+
+#### `POST /v1/skills` 的 P0 契约
+
+上表只有方法、路径和一句用途——P0 实现它时必须把契约补全，以下是补齐的结果。**P0 只实现这一种形态**（zip 上传）；`git 源` 与 `目录树` 推迟。
+
+请求：`multipart/form-data`，part `file` 是 zip。**没有 `namespace` 参数**——这是一条否定决定：目标命名空间由令牌 subject 的个人空间推出，否则发布就变成一个跨命名空间写入的原语。同理**没有 `visibility` 参数**——§4.2 给元数据单独的端点，在发布上接受它会让人在没注意到的字段上把 private 变成 public。
+
+响应：`201` 首次发布，`200` 且 `created:false` 表示同样内容已存在。**version 不变、`published_at` 不变、当前版本指针不动**——指针前移等于偷偷实现了 P2 的回滚。
+
+```json
+{ "id": "01J…", "namespace": "alice", "name": "pdf-tools", "created": true,
+  "version": { "number": 3, "digest": "sha256:…", "file_count": 25, "total_bytes": 364869,
+               "published_at": "2026-09-26T10:00:00Z" } }
+```
+
+**上传被拒时是 `400 invalid_upload`**，可能的原因：不是 zip、含符号链接项、绝对路径或 `..` 段、超过 512 文件、解压后超过 16 MiB、根目录名与 frontmatter 的 `name` 不符、缺 `SKILL.md`、frontmatter 缺 `name`/`description` 或解析失败。**每一项都不得静默降级**——§3.3 点 4。
+**请求体超过 multipart 上限时是 `413`**。那个上限**不是 skill 上限**：它是「读进内存之前的保护」，特意设在合法 skill 的最大可能体积之上，好让超限的 skill 由校验器带着理由拒绝，而不是被容器用一个裸 413 拒掉。
+
+**发布到已软删的名字 → `400 invalid_request`**，不是静默复活：§4.3 的 `restore` 就是为这件事存在的，让 publish 兼任它会让删除变成建议。
 
 ### 4.4 鉴权接口（自建 AS）
 
@@ -699,16 +841,27 @@ skill 的内容会被客户端取走、在客户端环境里使用，事后追�
 
 > **一条实现约束**：客户端查找从 v1 就走接口（Spring Security 的 `RegisteredClientRepository`），**不要硬编码成「反正只有一个客户端」**——那样 P2 加 CIMD 就变成重构授权流程，而不是新增一个实现。
 
+> **缺口：这里没有注册端点。** 上表只有 `/login` 与 `/logout`，而 [`prd.md`](prd.md) §验收与指标 第 1 条要求走通「注册 → 登录 → 拿到令牌」。注册属于 M1（P1），**P0a 不实现**——P0 只有一个静态令牌，它绑定的 `app_user` 与 `namespace` 由迁移脚本 seed（`V2__seed_owner_and_namespaces.sql`）。补 P1 时这里要加一行，并把 §2.5 那条「注册（M1 + M4 同事务写 `app_user` + `namespace` + `namespace_member`）」的用例对上。
+
 ### 4.5 网关 skill 的分发接口
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
 | `GET` | `/.well-known/agent-skills/index.json` | V2，**只含网关 skill 一个 entry** |
 | `GET` | `/.well-known/skills/index.json` | V1，同上（旧版 CLI 用） |
-| `GET` | `/.well-known/gateway/skillmaster/<relpath>` | V1 的逐文件拉取 |
+| `GET` | `/.well-known/<base>/skillmaster/<relpath>` | V1 的逐文件拉取；`<base>` 见下 |
 | `GET` | `/gateway/SKILL.md` | 网关 skill 正文（CLI `setup` 用） |
 
-**未发布时必须返回真 404**（见 1.5 的坑）。**网关 skill 发布在一个保留命名空间里**（如 `skillmaster`），它本身也是一个普通 skill，有版本、有 digest。
+**四条路径全部匿名可达**，这是设计不是疏漏：§1.5 实测这条通道既没有认证、也没有任何门控概念，而它正是「一台还没登录的机器怎么知道去哪登录」的答案——要求令牌会让它恰好对唯一需要它的客户端不可达。安全配置里这四条是显式放行的，其余仍然默认拒绝。
+
+**逐文件拉取的 `<base>` 有三个别名**：`gateway`、`skills`、`agent-skills`，同一份字节都发。原因是 §1.5 记的解析顺序（「先按路径相对、再按根」）与本文把该路由放在 `gateway/` 之下可能对不上，在 P0b 的 CLI 实测判定之前不猜是哪一个。**别名是一个封闭集合**：别的 `<base>` 一律 404，不然 `/.well-known/` 下任何路径都会变成入口。
+
+**V2 索引里的 `digest` 是「内容 digest」，不是版本 digest。** 两者哈希的东西不同：ADR 0005 的版本 digest 哈希的是 `relpath + NUL + blob_sha256 + NUL` 拼成的清单（不必读内容就能算），而客户端期望的这个哈希的是 `path + NUL + 文件字节 + NUL`（§1.5，自 CLI 的 `computeWellKnownSkillDigest` 反查而来）。在 V2 里声明前者，客户端会拿自己的内容哈希去比一个清单哈希，每次都不等，于是**永远认为网关有更新**——ADR 0005 自己警告过的形态。**两个都实现**，各配冻结向量测试。
+
+**未发布时必须返回真 404**（见 1.5 的坑）：一个不发布这套约定但用 SPA 兜底的主机，首选路径会返回 **200 + HTML**，客户端无法把它和真索引区分开。从 classpath 提供一份模板会复现同一句谎话——所以这四条路径读的是**已发布的那个 skill**，不是仓库里的源文件。
+**网关 skill 发布在一个保留命名空间里**（`skillmaster`），它本身也是一个普通 skill，有版本、有 digest。
+
+**索引路径是唯一不需要认证的读取面**：V2 索引会广告一个绝对 URL（取自 `skillmaster.public-base-url`），因为从这个索引安装的客户端不一定正在跟发它的那台主机说话。
 
 ### 4.6 CLI 命令
 
@@ -719,14 +872,15 @@ skill 的内容会被客户端取走、在客户端环境里使用，事后追�
 | `skillmaster logout` | 撤销并清除本地令牌 |
 | `skillmaster setup` | 检测本机 agent → 装网关 skill → 软链 |
 | `skillmaster search <q>` | 调 `/v1/skills` |
-| `skillmaster show <id>` | 调 `/v1/skills/{id}` |
-| `skillmaster get <id> [relpath]` | 取正文或单个文件，落到临时目录 |
+| `skillmaster show <namespace/name>[@版本]` | 调详情；`@版本` 可省 |
+| `skillmaster get <namespace/name>[@版本] [relpath]` | 取正文或单个文件，落到临时目录 |
 | `skillmaster publish <path>` | 管理端：发布 |
 
-**两个设计点**：
+**三个设计点**：
 
 - **agent 用 CLI 而不是裸 curl**：令牌由 CLI 从 keychain 读，**永不进模型上下文、不进命令记录**。裸 curl 会让令牌出现在 Bash 命令里。
 - **`get` 落到临时目录是允许的**——那是 agent 完成任务的中间产物，与"把 skill 下载到本地"是两回事。前者用完即弃，后者是一份可长期阅读的副本。
+- **`@版本` 要显式写进后续命令。**`show` 返回的 `uri` 里已经带着 `@3`，但 `get` 是**另一条命令**——如果不把 `@3` 带上，它就等于「从入口再进一次」，会重新解析 latest（[ADR 0012](../../decisions/0012-addressing-and-version-pinning.md) §后果）。所以 CLI 接受显式钉版，agent 把第一次结果里的 `@3` 抄进后面的命令。**另一种做法是 CLI 在本地记「本任务钉在哪」**（像 lockfile），但「任务」的边界在 CLI 里同样不清楚，而且要多维护一份状态。
 
 ---
 
@@ -743,6 +897,15 @@ skill 的内容会被客户端取走、在客户端环境里使用，事后追�
 | `name` | `skillmaster`。标准的 MUST 要求它等于父目录名，所以源文件落在 `gateway/skillmaster/`（§2.4） |
 | `description` | 写得**足够广**——目录不常驻，「该不该去查 skill 库」全靠这一句。见 §5.2 第 1 条 |
 | `metadata.platform_api_version` | 协议版本号；CLI `setup` 据此判断本地网关是否过期。见 §5.2 第 3 条 |
+
+#### 源文件里的 `https://<host>` 占位符，在发布时替换一次
+
+源文件里写的是字面量 `https://<host>`，因为那份文件提交在一个**公开仓库**里、还要装到**还没跟任何服务器说过话**的机器上，它没法写死一个地址。服务端在**发布时**把它换成 `skillmaster.public-base-url`。
+
+**不能改成每次请求时替换。** 那会让发出去的字节与索引里声明的 digest 对不上——§4.2 的「托管要保真」和 ADR 0005 的 digest 都要求服务端返回的字节就是被哈希过的字节。按请求改写等于让每次读都返回一个「新版本」。
+
+**替换必须确定性**：无时间戳、无随机，同一份配置跑两次得到同样的字节。这不是洁癖——服务端每次启动都重发一次网关，确定性才让这次重发是**幂等空操作**（`UNIQUE(skill_id, digest)`）。否则每次重启都会产生新版本，于是每个装过网关的客户端都以为自己过期了。
+源文件保持是模板；**已发布的版本是渲染后的**。
 
 ### 5.2 三条设计约束
 
@@ -785,15 +948,32 @@ skill 的内容会被客户端取走、在客户端环境里使用，事后追�
 
 ## 第 7 章 · 分期
 
-### P0 · 服务端 + CLI + 网关，跑通一次远程读取
+### P0a · 服务端（已实现）
+
+P0 原本是一条端到端的验收，但它的验收需要 CLI，而 CLI 不存在——**所以 P0 拆成两半**，服务端这部分先做完。P0a 交付的是下面这些，**不含 CLI**：
 
 - 表结构落地（第 3 章）+ 严格校验 + digest + 不可变版本
 - 四个读接口 + 服务端搜索排序
-- **服务端可运行入口**（HTTP 服务）。**当前镜像构建得出来但起不来**——还没有入口，在它交付之前 `:latest` 不是可用产物。构建配置随 [ADR 0011](../../decisions/0011-server-and-cli-stack.md) 换成 Java 后，这一条不变
-- **鉴权用一把静态令牌先行**（AS 放 P1），把链路跑通
+- **服务端可运行入口**（HTTP 服务）。此前镜像构建得出来但起不来——没有入口；现在有了
+- **鉴权用一把静态令牌先行**（AS 放 P1），把链路跑通。令牌绑定的 `app_user` 与 `namespace` 由迁移脚本 seed，因为注册属于 P1
+- 一个最小写接口（`POST /v1/skills` 收 zip）与一个软删端点（§4.3）——P0 的清单里原本没有任何写接口，而验收要求「服务端已托管至少一个真实 skill」，没有摄入就无从触发「严格校验 + digest + 不可变版本」
+- 网关 skill 发布到 well-known 索引（V2 + V1 两条路径），**服务端每次启动重发一次**（幂等）
+- **验收**：服务端闭环——发布一个 zip → 搜到 → 看清单（确认零内容）→ 取正文 → 取单个文件 → 取网关；以及 §4.2 的契约负例（无令牌 401、越权 404、`../` 取文件 404、未发布时 well-known 真 404、同内容重发 version 不变）
+
+### P0b · CLI + 网关安装（下一轮）
+
 - CLI：`setup` / `search` / `show` / `get`
-- 网关 skill 发布到 well-known 索引（V2 + V1 两条路径）
-- **验收**：在一个干净环境里 `setup` 装上网关，然后在 agent 里问一个需要某 skill 的任务，agent 能自己搜到、读到正文、按需取文件并完成任务——**且全程没有任何 skill 内容被当作副本落到本地**（`get` 落到临时目录是 agent 的中间产物，不算，见 §4.6）
+- 网关 `setup` 装到本地并按 `metadata.platform_api_version` 比对更新
+- **验收**（也就是 P0 原本的验收）：在一个干净环境里 `setup` 装上网关，然后在 agent 里问一个需要某 skill 的任务，agent 能自己搜到、读到正文、按需取文件并完成任务——**且全程没有任何 skill 内容被当作副本落到本地**（`get` 落到临时目录是 agent 的中间产物，不算，见 §4.6）
+
+**P0b 同时是若干未验证项的收口处**，因为只有真实客户端能判定它们：well-known 索引的 digest 算法是否符合客户端期望、V2 索引的 `$schema` 到底是什么 URL（现在留空不猜）、逐文件拉取的 `<base>` 究竟是哪几个别名。
+
+### P0c · 寻址改成 `namespace/name` + 版本钉（**已实现**）
+
+[ADR 0012](../../decisions/0012-addressing-and-version-pinning.md) 的寻址模型已落地：`skill_version` 有了序号列与 `UNIQUE(skill_id, number)`，三个读端点与 `DELETE` 都按 `namespace/name[@版本]` 寻址，详情响应的 `files[]` 每项带一条已钉版本的 `uri`（`resources.file` 那个 `{relpath}` 模板随之删掉），发布分配序号。**验收**见 [`test-plan.md`](test-plan.md) §结果。
+
+**P0a 曾按旧寻址（`/v1/skills/{id}`、无版本概念）实现并测试通过**，所以这次是把那批断言**逐条重写**而不是打补丁——旧契约的测试全绿，不构成新契约成立的证据。
+
 
 ### P1 · 自建登录与令牌
 
@@ -820,12 +1000,17 @@ skill 的内容会被客户端取走、在客户端环境里使用，事后追�
 按需要先解决的顺序：
 
 1. **网关 skill 的 `description` 怎么写。** 它决定发现体验的上限，且没有数据可依。建议先写，然后用真实任务集做回归（"给这 20 个任务，看它该不该去查 skill 库"）。
-2. **排序公式的权重与可解释性。** P0 纯启发式，必须可解释（作者/用户要能理解为什么排这个位置），且要能回归测试。
-3. **搜索的中文分词与索引形态。** 原计划（SQLite FTS5 + `trigram`）已实测**不可行**：它对少于 3 个字符的查询返回 0，而两个汉字是最常见的一次查询（证据见 [ADR 0010](../../decisions/0010-storage-in-postgres.md)）。方向是 PostgreSQL 侧的 **`pg_bigm`**（2-gram 索引）——**要验证**它在选定的实例系列上可用、且 `shared_preload_libraries` 能配上。排序的文本相关性算法随之一并待定（见 §3.4）。
-4. **`relpath` 的取值规范。** 允许哪些字符、是否允许非 ASCII、大小写敏感性——一旦发布就不好改，且它进 URL。
+2. **排序权重调到多少。** P0 的公式与权重位置已定（§3.4），值是启发式起点（100/40/20），可配置。仍未解决的是**怎么判定调好了**——需要一套真实查询与期望结果的回归集，P0 没有。
+3. **搜索的中文分词与索引形态。** 原计划（SQLite FTS5 + `trigram`）已实测**不可行**：它对少于 3 个字符的查询返回 0，而两个汉字是最常见的一次查询（证据见 [ADR 0010](../../decisions/0010-storage-in-postgres.md)）。方向是 PostgreSQL 侧的 **`pg_bigm`**（2-gram 索引）。**扩展的可用性已核实**（2026-09-28）：阿里云 RDS for PostgreSQL 官方文档有专页讲用 `pg_bigm` 做模糊查询，写明它对中日文这类非字母语言、以及 1–2 个字符的短关键词有效（来源：阿里云帮助中心《Fuzzy query (pg_bigm)》，2026-03-28 更新）。**仍未核实的是部署时那台实例上的两件事**：RDS **基础版**是否可用、`shared_preload_libraries` 能否配上——两者都要等真正部署才验得了。**P0a 已用 `LIKE` 直查绕开这个问题**（功能可用、没有索引），所以本条现在只关延迟，不关正确性。`pg_bigm` 是 GIN 索引、加速同样的 `LIKE` 但不给相关性分数——见 §3.4。
+4. **`relpath` 的取值规范。** P0 已定最小集并写进 §3.3（POSIX 分隔符、不以 `/` 开头、无 `..`、无反斜杠、大小写敏感、允许非 ASCII）。仍未定的是**是否要放开**——一旦发布就不好改，且它进 URL。
+   **新增一维**：地址改成 `namespace/name` 之后，`name` 也进了 URL，于是 `name` 的取值规范变成对外契约的一部分。P0c 已禁掉 `@`（版本后缀的分隔符，留着地址就不可判定），现行规则是 ≤64 字符、不含空白与路径分隔符、**不含 `@`**、**允许非 ASCII**（`SkillUploadValidator`）。仍未定的是**要不要收紧到 ASCII**：一个叫 `飞书任务` 的 skill 会得到一条百分号编码的地址——功能上正确（`uri` 会编码，客户端照抄即可），但它既不好看也不好手写。**另有两个收紧理由已实测**：`;` 与 `%` 都会让 `uri` 取不到（`StrictHttpFirewall` 分别拒绝分号与 `%25`），见 [`test-plan.md`](test-plan.md) §已知问题（缺陷的权威在那里，此处不重述）。**其中 `name` 那一半已在 2026-09-28 的审计轮收口**：M5 现在拒绝含 `%` 或 `;` 的名字（错误码 `name_contains_unaddressable_char`），因为那一半更严重——名字里带上它们，连详情、正文与删除地址都一起失效。`relpath` 那一半仍留着。
 5. **无人值守的 Client Credentials 怎么发放**：谁有权创建、绑哪个用户身份、scope 怎么限。
-6. **blob GC 的策略**：延迟多久回收、是否需要"回收前先归档"。
+6. **blob GC 的策略**：延迟多久回收、是否需要"回收前先归档"。P0 的占位答案是「版本变更时清扫、不延迟、不归档」，且 P0 一次都删不掉东西（§3.3 点 5）。**另有一个 P2 才需要回答的**：现在清扫要把「仍被引用的 hash 全集合」搬过 M7→M6 的接缝，版本历史大了之后这个集合会很大——见 §2.5 规则①的落法。
 7. **是否支持从别的 registry 镜像**（如把飞书的 `lark-*` 导入进来）。
+8. **阿里云 RDS 是否允许用户表空间。** 没有核实过。P0 把 `TABLESPACE` 降级成部署步骤（§3.3），所以它只影响「字节能不能搬到单独表空间」，不影响能否上线。
+9. **well-known 索引的三件事**（都只能等 P0b 的 CLI 实测）：V2 的 `digest` 用哪个算法才符合客户端期望（§4.5，P0 按 §1.5 反查的结果实现，但那是读反编译代码得来的）、V2 的 `$schema` 到底是什么 URL（§1.5 说它挂在 `agentskills.io` 下且当前 DNS 不解析，所以 P0 留空不猜——见 `GatewayIndex.V2`）、逐文件拉取的 `<base>` 该是哪几个（§4.5，P0 三个别名都发）。
+10. **改名之后旧地址怎么办。** 地址改成 `namespace/name` 之后，改名就会**断掉已经发出去的地址**——那些地址可能写在别的 skill 正文里、写在文档里、写在 agent 的上下文里。三条路：**断链**（最简单，`404`）、**留别名**（旧名永久解析到同一个 skill，代价是改过的名字像域名一样永久占位、且需要一张别名表）、**只允许软改**（改名 = 新建一个 skill + 把旧的标成「已迁移」，地址不回退）。ADR 0004 当初选不透明 id 正是为了躲开这个取舍，现在取舍回来了——**未定**。
+11. **草稿要不要做、以什么形态做。** v1 明确不做（[ADR 0012](../../decisions/0012-addressing-and-version-pinning.md) §理由：v1 里没有第二个消费者，草稿与已发布在可见性上没有区别）。P2 有共享之后再做，形态待定——「版本上的一个状态位」与「独立的可变工作副本」是两种东西，后者更贴 git 的工作区语义但要处理 GC（§3.3 已记下那个坑）。
 
 ---
 
@@ -833,7 +1018,7 @@ skill 的内容会被客户端取走、在客户端环境里使用，事后追�
 
 本设计里的**决策不写在这里**，而是独立成编号 ADR —— 决策跨版本存活，不该随设计文档一起被重写。
 
-完整索引见 [`decisions/README.md`](../../decisions/README.md)。与本版相关的十一条：
+完整索引见 [`decisions/README.md`](../../decisions/README.md)。与本版相关的十二条：
 
 | ADR | 决策 | 本文对应章节 |
 |---|---|---|
@@ -848,6 +1033,7 @@ skill 的内容会被客户端取走、在客户端环境里使用，事后追�
 | [0009](../../decisions/0009-drop-l2n.md) | 砍掉 `l2#n`，付费边界只落在层与层之间 | 附录 B |
 | [0010](../../decisions/0010-storage-in-postgres.md) | 存储全部落在 PostgreSQL（含字节） | 第 2、3 章 |
 | [0011](../../decisions/0011-server-and-cli-stack.md) | 技术栈：服务端 Java + Spring，CLI 用 Go | 第 2、4、6、7 章 |
+| [0012](../../decisions/0012-addressing-and-version-pinning.md) | 寻址：`namespace/name` + 版本钉 | 4.1、4.2、4.3、第 7 章 |
 
 **本文只链接、不复述理由。** 若发现正文里重复解释了某条决策的原因，那是需要清理的重复——理由只有一处权威来源，就是 ADR 本身。
 

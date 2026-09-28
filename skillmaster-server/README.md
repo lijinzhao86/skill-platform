@@ -5,9 +5,12 @@ server, and blob storage ([technical design](../../docs/versions/v1-hosting/tech
 §2.2). **Java 25 (LTS) + Spring Boot 4 / Spring Security 7**
 ([ADR 0011](../../docs/decisions/0011-server-and-cli-stack.md)).
 
-**Framework only.** It builds and starts, and the sole endpoint is `/actuator/health`.
-None of the API, the AS, or storage is implemented yet — the phasing is in
-[`technical-design.md`](../../docs/versions/v1-hosting/technical-design.md) §7.
+**P0a and P0c are implemented**: publishing a skill, the four read endpoints, search, and the
+gateway's discovery channel, over PostgreSQL. A skill is addressed as `namespace/name[@version]`
+([ADR 0012](../../docs/decisions/0012-addressing-and-version-pinning.md)), so the detail response
+hands out a URI per file with the version already written into it. The authorization server, login
+and registration are P1, so today the API authenticates with a single static token. The phasing is
+in [`technical-design.md`](../../docs/versions/v1-hosting/technical-design.md) §7.
 
 ## Toolchain
 
@@ -31,6 +34,57 @@ point `JAVA_HOME` at 25 explicitly:
 ```bash
 export JAVA_HOME=$(brew --prefix openjdk@25)   # Homebrew, macOS
 ```
+
+## Walking the whole loop by hand
+
+The sequence below is the same one [`ServerSmokeIT`](src/test/java/com/skillmasterai/api/ServerSmokeIT.java)
+asserts, so if it works there it should work here. It needs a database the migrations can run
+against, and a token:
+
+```bash
+createdb skillmaster                                        # once
+export SKILLMASTER_AUTH_STATIC_TOKEN=$(openssl rand -hex 24)   # no default: see application.yml
+./mvnw spring-boot:run
+```
+
+Then, in another shell, publish a skill and read it back at each level. `TOKEN` is the value
+above, and the archive's directory must be named after the skill (§1.3):
+
+```bash
+TOKEN=...                                                   # same value as the export above
+API=http://localhost:8080/v1
+SKILL=demo/feishu-tasks                                     # namespace/name — the namespace is the owner's handle
+
+mkdir -p /tmp/demo/feishu-tasks/references
+printf -- '---\nname: feishu-tasks\ndescription: 飞书任务\n---\n# 飞书任务\n\n读 `references/fields.md`。\n' \
+  > /tmp/demo/feishu-tasks/SKILL.md
+printf '# 字段\n' > /tmp/demo/feishu-tasks/references/fields.md
+(cd /tmp/demo && zip -qr /tmp/feishu-tasks.zip feishu-tasks)
+
+# publish — 201 the first time, 200 with created:false if the content is unchanged
+curl -sS -X POST "$API/skills" -H "Authorization: Bearer $TOKEN" \
+  -F file=@/tmp/feishu-tasks.zip
+
+# L1 — search, then the full manifest and no content. The detail resolves the version and writes
+# it into every file's uri, which is what the two calls below follow.
+curl -sS "$API/skills?q=飞书" -H "Authorization: Bearer $TOKEN"
+curl -sS "$API/skills/$SKILL" -H "Authorization: Bearer $TOKEN"
+VERSION=...                                                 # version.number from that response
+
+# L2 and L3 — the bytes themselves. Drop the @VERSION and these resolve `latest` afresh instead,
+# which is how a manifest and the bytes fetched from it come to disagree after someone publishes.
+curl -sS "$API/skills/$SKILL@$VERSION/body" -H "Authorization: Bearer $TOKEN"
+curl -sS "$API/skills/$SKILL@$VERSION/files/references/fields.md" -H "Authorization: Bearer $TOKEN"
+
+# the anonymous discovery channel — no token, and a real 404 until the gateway is published
+curl -sS "http://localhost:8080/.well-known/agent-skills/index.json"
+curl -sS "http://localhost:8080/.well-known/skills/index.json"
+curl -sS "http://localhost:8080/gateway/SKILL.md"
+```
+
+The last three have no `Authorization` header on purpose: that channel is how a machine that has
+never logged in learns where to log in, so requiring a token would make it unreachable by the only
+clients that need it (§1.5).
 
 ## Dockerfile
 

@@ -53,11 +53,28 @@ REQUIRED_VERSION_FILES = ["README.md", "prd.md", "technical-design.md", "test-pl
 OPTIONAL_VERSION_FILES = ["known-issues.md"]
 VERSION_SUBDIRS = ["iterations"]
 
+# `docs/architecture/` — the cross-version engineering architecture. Only the
+# index is required: the rest migrates in as each module is discussed, and
+# demanding a file before its content exists is how you get a second authority
+# that drifts from the one it was copied out of.
+ARCHITECTURE_DIR = "architecture"
+ARCHITECTURE_REQUIRED_FILES = ["README.md"]
+ARCHITECTURE_OPTIONAL_FILES = ["rules.md", "model.md"]
+ARCHITECTURE_SUBDIRS = ["modules"]
+
+# Figures that sit beside a document rather than being one. Admitted as a class
+# rather than by filename: an image carries no prose, so — unlike a stray .md —
+# it cannot become a second authority on a fact, which is the only thing the
+# closed folder shapes exist to prevent. Naming a figure is therefore free, and
+# every future diagram is covered without another edit here.
+ASSET_SUFFIXES = (".svg", ".png")
+
 ADR_SECTIONS = ["背景", "决定", "理由", "后果"]
 
 ITERATION_RE = re.compile(r"^\d{4}-[^\s/\\]+\.md$")
 VERSION_DIR_RE = re.compile(r"^v\d+-[a-z0-9][a-z0-9-]*$")
 ADR_FILE_RE = re.compile(r"^\d{4}-[^\s/\\]+\.md$")
+MODULE_DOC_RE = re.compile(r"^M\d{2}-[a-z0-9][a-z0-9-]*\.md$")
 LINK_RE = re.compile(r"\[[^\]]*\]\(([^)]+)\)")
 
 FENCE_OPEN_RE = re.compile(r"^\s*(`{3,}|~{3,})")
@@ -134,6 +151,11 @@ def analyse(text: str) -> tuple[str, list[str], str]:
             lead.append(line)
 
     return "\n".join(lead), headings, "\n".join(kept)
+
+
+def is_asset(filename: str) -> bool:
+    """True for an image that accompanies a document instead of being one."""
+    return filename.lower().endswith(ASSET_SUFFIXES)
 
 
 def check_topics(path: str, filename: str) -> list[str]:
@@ -249,9 +271,12 @@ def check_version(version_dir: str, name: str) -> list[str]:
                 problems.append(
                     f"{name}/{entry}/ 不在约定内（版本文件夹只放四份文档 + iterations/）"
                 )
+        elif is_asset(entry):
+            continue
         elif entry not in known_files:
             problems.append(
-                f"{name}/{entry} 不在约定内（版本文件夹只放四份文档 + known-issues.md）"
+                f"{name}/{entry} 不在约定内"
+                f"（版本文件夹只放四份文档 + known-issues.md + 图片）"
             )
 
     iterations = os.path.join(version_dir, VERSION_SUBDIRS[0])
@@ -261,7 +286,7 @@ def check_version(version_dir: str, name: str) -> list[str]:
                 continue
             if not os.path.isfile(os.path.join(iterations, filename)):
                 problems.append(f"{name}/iterations/{filename} 不是文件")
-            elif not ITERATION_RE.match(filename):
+            elif not is_asset(filename) and not ITERATION_RE.match(filename):
                 problems.append(
                     f"{name}/iterations/{filename} 命名不合规（应为 NNNN-slug.md）"
                 )
@@ -269,6 +294,61 @@ def check_version(version_dir: str, name: str) -> list[str]:
     # Decisions must never live inside a version folder.
     if os.path.isdir(os.path.join(version_dir, "decisions")):
         problems.append(f"{name}/decisions/ 不应存在——决策属于 docs/decisions/")
+
+    return problems
+
+
+def check_architecture(docs_dir: str) -> list[str]:
+    """`docs/architecture/` — the architecture that outlives versions.
+
+    Checks the shape, not the content: the folder is closed (anything beyond the
+    names below — and images, see ASSET_SUFFIXES — is reported), and `modules/`
+    filenames are pinned to `MNN-slug.md` so the module docs stay sorted and
+    addressable by module id.
+
+    `rules.md`, `model.md` and `modules/` are checked only when present, the same
+    way `iterations/` is. That is deliberate: architecture content moves here as
+    it is discussed, and requiring an empty file up front would invite a copy of
+    whatever it is meant to replace.
+    """
+    arch = os.path.join(docs_dir, ARCHITECTURE_DIR)
+    if not os.path.isdir(arch):
+        return [f"docs/{ARCHITECTURE_DIR}/ 不存在"]
+
+    problems: list[str] = []
+    for filename in ARCHITECTURE_REQUIRED_FILES:
+        if not os.path.isfile(os.path.join(arch, filename)):
+            problems.append(f"{ARCHITECTURE_DIR}/{filename} 缺失")
+
+    known_files = set(ARCHITECTURE_REQUIRED_FILES) | set(ARCHITECTURE_OPTIONAL_FILES)
+    for entry in sorted(os.listdir(arch)):
+        if entry.startswith("."):
+            continue
+        path = os.path.join(arch, entry)
+        if os.path.isdir(path):
+            if entry not in ARCHITECTURE_SUBDIRS:
+                problems.append(
+                    f"{ARCHITECTURE_DIR}/{entry}/ 不在约定内（只放 modules/）"
+                )
+        elif is_asset(entry):
+            continue
+        elif entry not in known_files:
+            problems.append(
+                f"{ARCHITECTURE_DIR}/{entry} 不在约定内"
+                f"（只放 README.md / rules.md / model.md + modules/ + 图片）"
+            )
+
+    modules = os.path.join(arch, "modules")
+    if os.path.isdir(modules):
+        for filename in sorted(os.listdir(modules)):
+            if filename.startswith("."):
+                continue
+            if not os.path.isfile(os.path.join(modules, filename)):
+                problems.append(f"{ARCHITECTURE_DIR}/modules/{filename} 不是文件")
+            elif not is_asset(filename) and not MODULE_DOC_RE.match(filename):
+                problems.append(
+                    f"{ARCHITECTURE_DIR}/modules/{filename} 命名不合规（应为 MNN-slug.md）"
+                )
 
     return problems
 
@@ -328,6 +408,24 @@ def main() -> int:
         print()
 
     problems.extend(check_decisions(os.path.join(docs, "decisions")))
+
+    arch = os.path.join(docs, ARCHITECTURE_DIR)
+    print(f"{ARCHITECTURE_DIR}/")
+    if os.path.isdir(arch):
+        present = [
+            f
+            for f in ARCHITECTURE_REQUIRED_FILES + ARCHITECTURE_OPTIONAL_FILES
+            if os.path.isfile(os.path.join(arch, f))
+        ]
+        print(f"  ✓ {'  '.join(present)}" if present else "  （无文档）")
+        modules = os.path.join(arch, "modules")
+        if os.path.isdir(modules):
+            count = len(
+                [f for f in os.listdir(modules) if f.endswith(".md")]
+            )
+            print(f"  modules/：{count} 篇")
+    problems.extend(check_architecture(docs))
+    print()
 
     total, broken = check_links(docs)
     print(f"  相对链接：检查 {total} 条")
