@@ -61,12 +61,15 @@ class ServerSmokeIT extends AbstractIT {
                 get("/v1/skills?q=%E9%A3%9E%E4%B9%A6", token()).body()).get("skills");
         assertThat(found).hasSize(1);
         assertThat(found.get(0).get("id").asText()).isEqualTo(id);
-        assertThat(found.get(0).get("digest").asText())
+        assertThat(found.get(0).get("version").get("digest").asText())
                 .as("the listing and the publish response agree on what is current")
                 .isEqualTo(digest);
+        assertThat(found.get(0).get("version").get("number").asInt())
+                .as("a card carries the version too, so one search is enough to pin (ADR 0012)")
+                .isEqualTo(publishBody.get("version").get("number").asInt());
 
         // L1, as a detail: the whole manifest and no content.
-        JsonNode detail = JSON.readTree(get("/v1/skills/" + id, token()).body());
+        JsonNode detail = JSON.readTree(get("/v1/skills/demo/feishu-tasks", token()).body());
         assertThat(detail.get("files")).hasSize(2);
         assertThat(detail.get("frontmatter").get("metadata").get("platform_api_version").asText())
                 .as("unknown fields survive the round trip (§3.3)")
@@ -76,22 +79,28 @@ class ServerSmokeIT extends AbstractIT {
                 .doesNotContain("用之前先读")
                 .doesNotContain("截止时间");
 
-        // L2: the original bytes, frontmatter included.
-        assertThat(new String(getBytes("/v1/skills/" + id + "/body", token()).body(),
-                StandardCharsets.UTF_8))
+        // L2 and L3 by the URIs the manifest advertised, not by paths assembled here. That is how a
+        // real client is told to work — enter once, then follow the addresses you were handed — and
+        // it is the only way the manifest's promise is actually exercised: if the routes and the
+        // advertised URIs ever drifted apart, every other test would stay green.
+        String bodyUri = detail.get("resources").get("body").asText();
+        assertThat(bodyUri)
+                .as("the version the address did not name is resolved and written into the URI")
+                .isEqualTo("/v1/skills/demo/feishu-tasks@1/body");
+        assertThat(new String(getBytes(bodyUri, token()).body(), StandardCharsets.UTF_8))
                 .as("byte for byte what was uploaded — ADR 0005's digest describes these bytes")
                 .isEqualTo(SKILL_MD);
 
-        // L3: one file, by the path the manifest named.
-        assertThat(new String(
-                getBytes("/v1/skills/" + id + "/files/references/fields.md", token()).body(),
-                StandardCharsets.UTF_8))
+        String fieldsUri = uriOf(detail, "references/fields.md");
+        assertThat(fieldsUri).isEqualTo("/v1/skills/demo/feishu-tasks@1/files/references/fields.md");
+        assertThat(new String(getBytes(fieldsUri, token()).body(), StandardCharsets.UTF_8))
                 .isEqualTo(FIELDS_MD);
 
         // And out again.
-        assertThat(send(request("/v1/skills/" + id, token()).DELETE().build()).statusCode())
+        assertThat(send(request("/v1/skills/demo/feishu-tasks", token()).DELETE().build())
+                .statusCode())
                 .isEqualTo(204);
-        assertThat(get("/v1/skills/" + id, token()).statusCode()).isEqualTo(404);
+        assertThat(get("/v1/skills/demo/feishu-tasks", token()).statusCode()).isEqualTo(404);
         assertThat(JSON.readTree(get("/v1/skills?q=%E9%A3%9E%E4%B9%A6", token()).body())
                 .get("skills"))
                 .as("a deleted skill is gone from search too, not only from detail")
@@ -107,6 +116,16 @@ class ServerSmokeIT extends AbstractIT {
         String second = JSON.readTree(publish().body()).get("version").get("digest").asText();
 
         assertThat(second).isEqualTo(first);
+    }
+
+    /** The pinned URI the manifest advertises for one file — what a client is told to fetch. */
+    private static String uriOf(JsonNode detail, String relpath) {
+        for (JsonNode file : detail.get("files")) {
+            if (file.get("relpath").asText().equals(relpath)) {
+                return file.get("uri").asText();
+            }
+        }
+        throw new AssertionError(relpath + " is not in the manifest: " + detail);
     }
 
     private HttpResponse<String> publish() {

@@ -62,11 +62,11 @@ public final class SkillCatalogRepository {
             int limit) {
 
         String sql = """
-                SELECT t.id, t.name, t.title, t.description, t.visibility, t.digest,
+                SELECT t.id, t.name, t.title, t.description, t.visibility, t.number, t.digest,
                        t.updated_at, t.relevance
                 FROM (
                     SELECT s.id, s.name, s.title, s.description, s.visibility, s.updated_at,
-                           v.digest AS digest, %s AS relevance
+                           v.number AS number, v.digest AS digest, %s AS relevance
                     FROM skill s
                     -- Inner, not left: publishing writes a skill and its first version in one
                     -- transaction, so a live skill always has a current version, and this join is
@@ -108,6 +108,7 @@ public final class SkillCatalogRepository {
                 rs.getString("title"),
                 rs.getString("description"),
                 rs.getString("visibility"),
+                rs.getInt("number"),
                 rs.getString("digest"),
                 rs.getString("updated_at"),
                 rs.getInt("relevance"))).list();

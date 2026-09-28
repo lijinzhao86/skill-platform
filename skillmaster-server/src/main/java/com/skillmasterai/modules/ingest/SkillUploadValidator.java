@@ -51,7 +51,10 @@ public final class SkillUploadValidator {
         Map<String, Object> frontmatter = FrontmatterParser.parse(skillMd.bytes());
         String name = requiredText(frontmatter, "name");
         String description = requiredText(frontmatter, "description");
-        String title = optionalText(frontmatter, "title").orElse(name);
+        // The blank filter is what makes `title: ""` fall back the way an absent title does: a
+        // present-but-empty title would otherwise reach every search card as an empty line.
+        String title = optionalText(frontmatter, "title").filter(value -> !value.isBlank())
+                .orElse(name);
 
         requireUsableName(name);
         if (stripped.directoryName() != null && !stripped.directoryName().equals(name)) {
@@ -113,6 +116,29 @@ public final class SkillUploadValidator {
         return java.util.Optional.ofNullable((String) value);
     }
 
+    /**
+     * Refuses a name that cannot name a directory, or cannot be addressed.
+     *
+     * <p>Whitespace, a path separator and {@code .}/{@code ..} are about the filesystem: §1.3
+     * requires the directory to be named after the skill, and none of those can be part of one.
+     *
+     * <p>{@code @} is about the address instead. §4.1 spells a version as a suffix — {@code
+     * ns/name@3} — so a name holding one would make the address undecidable: {@code name@3} could be
+     * the third version of {@code name} or a skill literally called {@code name@3}. Reserving the
+     * character is what keeps splitting at the first {@code @} unambiguous, and it forbids nothing a
+     * reader would miss: §1.3's own rule for {@code name} is narrower still (lowercase letters,
+     * digits and hyphens).
+     *
+     * <p>{@code %} and {@code ;} are about the transport, and they are the reason this check is
+     * here rather than left to the URL builder. Both have to be percent-encoded into a path — {@code
+     * %} as {@code %25}, {@code ;} as {@code %3B} — and Spring Security's {@code StrictHttpFirewall}
+     * refuses both spellings outright, on the request URI and again on the decoded path. A name
+     * holding one is therefore publishable and searchable but <em>unreachable</em>: the detail, the
+     * body and every file 404 with a bare 400 before routing, and the delete endpoint fails the
+     * same way, so the skill can never be removed either. Refusing it at the door is the only place
+     * the two halves of that — what may be stored, and what a path can carry — can be kept in
+     * agreement.
+     */
     private static void requireUsableName(String name) {
         if (name.length() > MAX_NAME_LENGTH) {
             throw new IngestException("the skill's name is longer than " + MAX_NAME_LENGTH + " characters",
@@ -123,6 +149,16 @@ public final class SkillUploadValidator {
             throw new IngestException(
                     "the skill's name contains whitespace or a path separator, or is a relative path",
                     "name", "name_not_usable_as_a_directory");
+        }
+        if (name.indexOf('@') >= 0) {
+            throw new IngestException(
+                    "the skill's name contains '@', which separates a version in the skill's address",
+                    "name", "name_contains_version_separator");
+        }
+        if (name.chars().anyMatch(c -> c == '%' || c == ';')) {
+            throw new IngestException(
+                    "the skill's name contains '%' or ';', which cannot be carried in a request path",
+                    "name", "name_contains_unaddressable_char");
         }
     }
 }

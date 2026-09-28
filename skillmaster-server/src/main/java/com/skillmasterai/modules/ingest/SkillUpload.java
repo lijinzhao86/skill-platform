@@ -1,5 +1,7 @@
 package com.skillmasterai.modules.ingest;
 
+import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -23,7 +25,12 @@ public record SkillUpload(
         List<IngestedFile> files) {
 
     public SkillUpload {
-        frontmatter = Map.copyOf(frontmatter);
+        // Not Map.copyOf: it refuses null *values*, and a frontmatter key written without one
+        // (`license:` with nothing after it) parses to exactly that — ordinary YAML rather than a
+        // malformed upload, and it would have failed as an uncaught NullPointerException. The copy
+        // is still defensive; it just has to tolerate the null, because storing the field as null
+        // is the honest record of what the author wrote.
+        frontmatter = Collections.unmodifiableMap(new LinkedHashMap<>(frontmatter));
         files = List.copyOf(files);
     }
 

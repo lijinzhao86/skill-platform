@@ -2,6 +2,7 @@ package com.skillmasterai.modules.namespace;
 
 import com.skillmasterai.modules.account.AccountDirectory;
 import com.skillmasterai.modules.namespace.internal.NamespaceRepository;
+import java.util.Optional;
 
 /**
  * M4's public face.
@@ -10,7 +11,12 @@ import com.skillmasterai.modules.namespace.internal.NamespaceRepository;
  * skill" method, because that decision has to be made where the skill is known and its answer has
  * to be rendered as 404 rather than 403 (§4.2). A predicate exposed here would invite the
  * authorization layer to turn it into a 403, which is the mistake that rule exists to prevent.
- * v1's answer is simply "the caller's own namespace", applied by each use case.
+ *
+ * <p>What <em>is</em> here is the narrower question — which namespace may this caller read from — as
+ * {@link #readableNamespaceOf}. It answers a fact about the namespace, not a verdict about a skill,
+ * and the callers still hand the namespace to M7 to filter on, so the 404 rule is untouched.
+ * Resolving it here rather than in each use case is what keeps "a caller reads only their own
+ * namespace" one rule instead of one branch per endpoint.
  */
 public final class NamespaceService {
 
@@ -41,6 +47,27 @@ public final class NamespaceService {
         return repository.findByOwnerAndSlug(userId, handle)
                 .orElseThrow(() -> new IllegalStateException(
                         "user " + userId + " has no personal namespace; registration creates one"));
+    }
+
+    /**
+     * The caller's own namespace, when the address named it — or nothing, when it named another.
+     *
+     * <p>v1 gives every caller exactly one namespace and its slug is their handle, so the first
+     * segment of an address either agrees with it or names a namespace the caller has no
+     * relationship with. The second case is <strong>not an authorization failure</strong>: §4.2
+     * renders an unreadable private skill as 404 rather than 403, and "that namespace is not yours"
+     * has to be the same kind of nothing as "no such skill", so it is empty rather than a no.
+     *
+     * <p>This is not a general "may I see this namespace" query, and it does not replace the
+     * predicate in {@link com.skillmasterai.modules.version.internal.SkillRepository}: callers still
+     * pass the namespace they may read from into M7, which filters on it in the statement that finds
+     * the row. When sharing and public discovery arrive (§3.2) this is what changes — into a lookup
+     * of "a namespace this user owns", so that somebody else's is not a value the use case can even
+     * build.
+     */
+    public Optional<Namespace> readableNamespaceOf(String userId, String slug) {
+        Namespace own = personalNamespaceOf(userId);
+        return own.slug().equals(slug) ? Optional.of(own) : Optional.empty();
     }
 
     /**

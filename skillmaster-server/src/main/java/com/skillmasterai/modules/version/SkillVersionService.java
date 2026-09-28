@@ -38,6 +38,10 @@ public final class SkillVersionService {
      */
     public PublishOutcome publish(String namespaceId, SkillMetadata metadata, Manifest manifest,
             String publishedBy, String source) {
+        // Before anything writes version_file, and unconditionally — including the replay that
+        // inserts nothing, which still sweeps. See BlobGc.beginExclusiveWrite.
+        blobGc.beginExclusiveWrite();
+
         String at = Timestamps.now();
 
         String skillId = skills.upsertLive(namespaceId, metadata, publishedBy, at)
@@ -52,8 +56,9 @@ public final class SkillVersionService {
             skills.moveCurrentVersion(skillId, inserted.get(), at);
         }
 
-        // Read back rather than trusting the inputs: on a replay the authoritative published_at is
-        // the original one, and a client comparing timestamps would otherwise see it move.
+        // Read back rather than trusting the inputs: on a replay the authoritative published_at and
+        // number are the originals, so a client comparing either would otherwise see them move — and
+        // a number taken from this call's own arithmetic would be one that was never assigned.
         VersionRepository.VersionRow row =
                 versions.findBySkillAndDigest(skillId, manifest.digest())
                         .orElseThrow(() -> new IllegalStateException(
@@ -61,61 +66,83 @@ public final class SkillVersionService {
 
         blobGc.sweep();
 
-        return new PublishOutcome(skillId, row.digest(), row.fileCount(), row.totalBytes(),
-                row.publishedAt(), inserted.isPresent());
+        return new PublishOutcome(skillId, row.number(), row.digest(), row.fileCount(),
+                row.totalBytes(), row.publishedAt(), inserted.isPresent());
     }
 
     /**
-     * A live skill's full state, or empty if there is no such skill in that namespace.
+     * One of a live skill's versions, or empty when there is no such skill in that namespace.
      *
      * <p>The namespace is a required parameter rather than something the caller checks afterwards,
      * which is what makes an unreadable skill indistinguishable from an absent one: see
-     * {@link SkillRepository#liveInNamespace}. The caller gets no way to ask "does it exist" —
-     * only "is there one I may read".
+     * {@link SkillRepository#liveByName}. The caller gets no way to ask "does it exist" — only "is
+     * there one I may read".
+     *
+     * <p><strong>Two conditions, both checked.</strong> The skill must be live <em>and</em> the
+     * version must exist. Resolving the version row alone would keep serving a soft-deleted skill,
+     * because a soft delete leaves {@code skill_version} and {@code version_file} in place (§3.3
+     * point 5) — the mistake ADR 0012's 后果 section names.
      *
      * @param namespaceId the namespace the caller is allowed to read from
+     * @param pin         which version. {@link VersionPin.Latest} re-reads the pointer on every
+     *                    call, so it drifts as soon as someone publishes; the other two never do
      */
-    public Optional<SkillSnapshot> liveSnapshotInNamespace(String skillId, String namespaceId) {
-        return skills.liveInNamespace(skillId, namespaceId).flatMap(this::toSnapshot);
+    public Optional<SkillSnapshot> liveSnapshot(String namespaceId, String name, VersionPin pin) {
+        return skills.liveByName(namespaceId, name)
+                .flatMap(row -> versionOf(row, pin).map(version -> toSnapshot(row, version)));
     }
 
     /**
-     * A live skill found by name rather than id, within one namespace.
+     * The version a pin selects, or empty when it names one that does not exist.
      *
-     * <p>For the gateway, whose skill is addressed by name because the name is part of its
-     * published URL and its id is not known until after the first publish. The namespace is
-     * required for the same reason as above — by-name lookups are otherwise a way to probe for
-     * other people's skills.
+     * <p>The two failure modes are deliberately not the same answer. A dangling pointer is our own
+     * corruption — publishing writes the skill and its first version in one transaction, so a live
+     * skill with no current version cannot come from this application — and it is loud, because
+     * answering 404 would blame the caller for it. A pinned version that is absent, on the other
+     * hand, is an ordinary miss: the address named something that was never published.
      */
-    public Optional<SkillSnapshot> liveSnapshotByName(String namespaceId, String name) {
-        return skills.liveByName(namespaceId, name).flatMap(this::toSnapshot);
-    }
-
-    /**
-     * Reads the version a skill row points at, and its manifest.
-     *
-     * <p>Loud rather than empty when the pointer dangles: publishing writes the skill and its first
-     * version in one transaction, so a live skill with no current version is an invariant this
-     * application cannot produce. Answering 404 would blame the caller for our own corruption.
-     */
-    private Optional<SkillSnapshot> toSnapshot(SkillRepository.SkillRow row) {
+    private Optional<VersionRepository.VersionRow> versionOf(SkillRepository.SkillRow row,
+            VersionPin pin) {
         if (row.currentVersionId() == null) {
             throw new IllegalStateException(
                     "skill " + row.id() + " is live but has no current version");
         }
-        VersionRepository.VersionRow version = versions.findById(row.currentVersionId())
-                .orElseThrow(() -> new IllegalStateException("skill " + row.id()
-                        + " points at version " + row.currentVersionId() + ", which does not exist"));
-
-        return Optional.of(new SkillSnapshot(
-                row.id(), row.namespaceId(), row.name(), row.title(), row.description(),
-                row.frontmatter(), row.visibility(), version.digest(), version.fileCount(),
-                version.totalBytes(), version.publishedAt(), versions.filesOf(version.id())));
+        return switch (pin) {
+            case VersionPin.Latest() -> Optional.of(versions.findById(row.currentVersionId())
+                    .orElseThrow(() -> new IllegalStateException("skill " + row.id()
+                            + " points at version " + row.currentVersionId()
+                            + ", which does not exist")));
+            case VersionPin.Number(int number) -> versions.findBySkillAndNumber(row.id(), number);
+            case VersionPin.Digest(String sha256Hex) ->
+                    versions.findBySkillAndDigest(row.id(), sha256Hex);
+        };
     }
 
-    /** @return whether a live skill the given namespace owns was deleted */
-    public boolean softDelete(String skillId, String namespaceId) {
-        boolean deleted = skills.softDelete(skillId, namespaceId, Timestamps.now());
+    private SkillSnapshot toSnapshot(SkillRepository.SkillRow row,
+            VersionRepository.VersionRow version) {
+        return new SkillSnapshot(
+                row.id(), row.namespaceId(), row.name(), row.title(), row.description(),
+                row.frontmatter(), row.visibility(), version.number(), version.digest(),
+                version.fileCount(), version.totalBytes(), version.publishedAt(),
+                version.id().equals(row.currentVersionId()), versions.filesOf(version.id()));
+    }
+
+    /**
+     * Soft-deletes a live skill by name, and reports which one it was.
+     *
+     * <p>The sweep runs unconditionally, exactly as it does on publish: §3.3 point 5 requires
+     * reclamation to happen in the same transaction as the version change that caused it, and a soft
+     * delete is such a change — even though in P0 it orphans nothing, because every version survives.
+     *
+     * @return the deleted skill's id, or empty when no live skill of that name is in that namespace
+     */
+    public Optional<String> softDelete(String namespaceId, String name) {
+        // Taken first for the same reason as on publish, even though this path writes no
+        // version_file row of its own: the sweep is here, and it has to be exclusive against a
+        // concurrent publish rather than only against another delete. See BlobGc.beginExclusiveWrite.
+        blobGc.beginExclusiveWrite();
+
+        Optional<String> deleted = skills.softDelete(namespaceId, name, Timestamps.now());
         blobGc.sweep();
         return deleted;
     }

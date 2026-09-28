@@ -8,8 +8,10 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Stream;
@@ -36,17 +38,52 @@ class TableOwnershipTest {
 
     private static final Path SOURCES = Path.of("src/main/java");
 
+    private static final Path MIGRATIONS = Path.of("src/main/resources/db/migration");
+
     private static final String COMMON_PACKAGE = ModuleMap.BASE_PACKAGE + ".common";
 
     private static final Pattern PACKAGE_DECLARATION =
             Pattern.compile("^\\s*package\\s+([\\w.]+)\\s*;", Pattern.MULTILINE);
 
+    /*
+     * Case-insensitive and leading-whitespace tolerant on purpose: PostgreSQL accepts either
+     * spelling and both are legal SQL, so a parse that only recognises the loud one would let the
+     * quiet one through as agreement — the set would simply lack the table on both sides.
+     */
+    private static final Pattern CREATE_TABLE =
+            Pattern.compile("^\\s*CREATE\\s+TABLE\\s+(\\w+)",
+                    Pattern.MULTILINE | Pattern.CASE_INSENSITIVE);
+
     @Test
-    void everyTableInTheBaselineIsOwnedByExactlyOneModule() {
-        // Pins the map against V1__baseline.sql. Adding a table there without giving it an owner
-        // fails here, instead of leaving it silently unreachable by the rule below. ModuleMap
-        // throws if two modules claim the same table.
-        assertThat(ModuleMap.tableOwners()).hasSize(17);
+    void everyTableInTheBaselineIsOwnedByExactlyOneModule() throws IOException {
+        // Pins the map against the migrations in both directions, which is what this test has
+        // always claimed to do. Counting the map's own entries could not do it: a table added to a
+        // migration and never registered leaves the count where it was and passed here, which is
+        // exactly the case §2.5 rule 1 exists to catch. ModuleMap throws if two modules claim the
+        // same table.
+        //
+        // Every migration file, not just the baseline: the next table arrives in a later one, and
+        // reading only V1 would leave it unowned and touchable from any module with nothing to
+        // notice.
+        assertThat(Files.isDirectory(MIGRATIONS))
+                .as("expected to run from the module directory, so %s resolves", MIGRATIONS)
+                .isTrue();
+
+        Set<String> declared = new HashSet<>();
+        try (Stream<Path> files = Files.list(MIGRATIONS)) {
+            for (Path file : files.filter(path -> path.toString().endsWith(".sql")).sorted().toList()) {
+                Matcher matcher = CREATE_TABLE.matcher(
+                        Files.readString(file, StandardCharsets.UTF_8));
+                while (matcher.find()) {
+                    declared.add(matcher.group(1));
+                }
+            }
+        }
+
+        assertThat(declared).as("%s should declare tables at all", MIGRATIONS).isNotEmpty();
+        assertThat(ModuleMap.tableOwners().keySet())
+                .as("every table the migrations declare, and only those, should have one owner")
+                .containsExactlyInAnyOrderElementsOf(declared);
     }
 
     @Test
@@ -110,6 +147,31 @@ class TableOwnershipTest {
         assertThat(literals).contains("SELECT * FROM blob");
     }
 
+    /**
+     * The matcher itself, which the rule below can only exercise negatively.
+     *
+     * <p>"Violations is empty" is equally true when nothing is ever matched, so a one-word edit that
+     * makes {@link #mentionsTable} always answer false switches rule 1's code-level half off and
+     * leaves the suite green — which is what this pins.
+     */
+    @Test
+    void aTableIsRecognisedOnlyWhereSqlNamesOne() {
+        assertThat(mentionsTable("SELECT * FROM skill WHERE id = 1", "skill")).isTrue();
+        assertThat(mentionsTable("INSERT INTO blob_content (sha256) VALUES ('x')", "blob_content"))
+                .isTrue();
+        assertThat(mentionsTable("UPDATE skill_version SET deleted_at = 1", "skill_version"))
+                .isTrue();
+        assertThat(mentionsTable("DELETE FROM audit_event", "audit_event")).isTrue();
+        assertThat(mentionsTable("LOCK TABLE version_file IN SHARE MODE", "version_file")).isTrue();
+
+        assertThat(mentionsTable("SELECT * FROM skill_version", "skill"))
+                .as("'_' is a word character, so this does not mention the 'skill' table")
+                .isFalse();
+        assertThat(mentionsTable("the skill has no SKILL.md at its root", "skill"))
+                .as("prose is not a query — the false positive the SQL-context rule exists to remove")
+                .isFalse();
+    }
+
     private static String packageOf(String source) {
         Matcher matcher = PACKAGE_DECLARATION.matcher(source);
         return matcher.find() ? matcher.group(1) : "";
@@ -131,7 +193,7 @@ class TableOwnershipTest {
      * <p>Word boundaries matter too: {@code '_'} is a word character, so {@code \bskill\b} does not
      * match inside {@code skill_version}, and every table would otherwise appear to be several.
      */
-    private static boolean mentionsTable(String queries, String table) {
+    static boolean mentionsTable(String queries, String table) {
         return Pattern.compile("(?i)\\b(?:from|join|into|update|table)\\s+" + Pattern.quote(table) + "\\b")
                 .matcher(queries)
                 .find();

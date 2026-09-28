@@ -7,6 +7,7 @@ import com.skillmasterai.modules.namespace.NamespaceService;
 import com.skillmasterai.modules.version.ManifestEntry;
 import com.skillmasterai.modules.version.SkillSnapshot;
 import com.skillmasterai.modules.version.SkillVersionService;
+import com.skillmasterai.modules.version.VersionPin;
 import java.util.List;
 import java.util.Optional;
 
@@ -134,7 +135,8 @@ public final class GatewayService {
 
     private Optional<SkillSnapshot> gatewaySkill() {
         return Optional.of(namespaces.namespaceOfSlug(RESERVED_NAMESPACE_SLUG))
-                .flatMap(namespace -> versions.liveSnapshotByName(namespace.id(), SKILL_NAME));
+                .flatMap(namespace -> versions.liveSnapshot(namespace.id(), SKILL_NAME,
+                        new VersionPin.Latest()));
     }
 
     private List<WellKnownDigest.File> contentOf(SkillSnapshot snapshot) {

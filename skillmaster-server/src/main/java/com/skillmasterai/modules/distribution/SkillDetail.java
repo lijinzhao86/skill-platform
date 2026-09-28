@@ -14,6 +14,11 @@ import java.util.List;
  *
  * @param namespaceSlug the namespace the skill lives in, already known to be readable by the caller
  * @param frontmatterJson the frontmatter exactly as published, unknown fields included
+ * @param number the version's immutable alias (ADR 0012). It is what the per-file URIs pin, because
+ *               it is the cheapest thing a client can carry forward and it is as immutable as the
+ *               digest
+ * @param isLatest whether this is the version the skill currently points at — false whenever the
+ *                 address pinned an older one
  */
 public record SkillDetail(
         String id,
@@ -24,10 +29,12 @@ public record SkillDetail(
         String namespaceTitle,
         String visibility,
         String frontmatterJson,
+        int number,
         String digest,
         String publishedAt,
         int fileCount,
         long totalBytes,
+        boolean isLatest,
         List<File> files) {
 
     public SkillDetail {

@@ -60,13 +60,15 @@ public final class SkillCatalogService {
     /**
      * One skill, as a listing needs it: L1 fields only, plus the score this ordering ranked it by.
      *
+     * @param number    the current version's immutable alias (ADR 0012); a card carries it so a
+     *                  client can pin without a second request
      * @param digest    the current version's digest, bare lowercase hex
      * @param updatedAt RFC3339 UTC; the row's own timestamp, not the version's — a metadata edit
      *                  moves it without creating a version (§4.3)
      * @param relevance the text score, 0 when no query text was given
      */
     public record CatalogRow(String id, String name, String title, String description,
-            String visibility, String digest, String updatedAt, int relevance) {
+            String visibility, int number, String digest, String updatedAt, int relevance) {
 
         /**
          * The cursor key for this row, ordered as {@link #page} compares its components.

@@ -6,6 +6,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import com.skillmasterai.support.Zips;
 import java.nio.charset.StandardCharsets;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
 
@@ -64,6 +65,27 @@ class SkillUploadValidatorTest {
                 "SKILL.md", "---\nname: pdf-tools\ndescription: d\n---\n")));
 
         assertThat(upload.title()).isEqualTo("pdf-tools");
+    }
+
+    @Test
+    void fallsBackToTheNameWhenTheTitleIsPresentButBlank() {
+        // Present-but-empty is not the same as absent, and §4.2 puts the title on every card — so a
+        // literal `title: ""` has to fall back rather than publish a blank display line.
+        SkillUpload upload = validator.validate(Zips.ofText(Map.of(
+                "SKILL.md", "---\nname: pdf-tools\ntitle: \"\"\ndescription: d\n---\n")));
+
+        assertThat(upload.title()).isEqualTo("pdf-tools");
+    }
+
+    @Test
+    void acceptsAFrontmatterFieldLeftBlank() {
+        // `license:` with nothing after it is ordinary YAML and parses to a null value. Copying the
+        // frontmatter with Map.copyOf — which rejects null values — turned that into an uncaught
+        // NullPointerException, so publishing an otherwise valid skill was a 500.
+        SkillUpload upload = validator.validate(Zips.ofText(Map.of(
+                "SKILL.md", "---\nname: pdf-tools\ndescription: d\nlicense:\n---\n")));
+
+        assertThat(upload.frontmatter()).containsEntry("license", null);
     }
 
     @Test
@@ -149,6 +171,61 @@ class SkillUploadValidatorTest {
     }
 
     @Test
+    void rejectsANameHoldingTheVersionSeparator() {
+        // §4.1 spells a version as a suffix — `ns/name@3` — so a name containing '@' would make the
+        // address undecidable: it could be the third version of `pdf-tools`, or a skill whose name
+        // is literally `pdf-tools@3`. Reserving the character is what keeps splitting at the first
+        // '@' unambiguous.
+        assertThatThrownBy(() -> validator.validate(Zips.ofText(Map.of(
+                "SKILL.md", "---\nname: pdf-tools@3\ndescription: d\n---\n"))))
+                .isInstanceOf(IngestException.class)
+                .hasMessageContaining("'@'")
+                .hasMessageContaining("version");
+    }
+
+    @Test
+    void rejectsANameThatNoRequestPathCanCarry() {
+        // '%' encodes to %25 and ';' is refused outright, both by StrictHttpFirewall on the request
+        // URI and again on the decoded path. A name holding either is publishable and searchable but
+        // has no address that reaches it — and the delete endpoint is spelled the same way, so the
+        // skill can never be removed either.
+        for (String name : List.of("100%-done", "a;b")) {
+            assertThatThrownBy(() -> validator.validate(Zips.ofText(Map.of(
+                    "SKILL.md", "---\nname: " + name + "\ndescription: d\n---\n"))))
+                    .as("name %s", name)
+                    .isInstanceOf(IngestException.class)
+                    .hasMessageContaining("request path");
+        }
+    }
+
+    @Test
+    void rejectsAnUploadWithTwoEntriesAtTheSamePath() {
+        // The zip format permits a repeated name and unzip only warns, but a manifest is keyed by
+        // relpath: the second entry collides on PRIMARY KEY (version_id, relpath) and surfaces as a
+        // 500 from the insert, after the blobs have already been written.
+        byte[] zip = Zips.patchedNames(
+                Zips.ofText(new LinkedHashMap<>(Map.of("SKILL.md", validSkillMd(),
+                        "a.md", "first", "b.md", "second"))),
+                "b.md", "a.md");
+
+        assertThatThrownBy(() -> validator.validate(zip))
+                .isInstanceOf(IngestException.class)
+                .hasMessageContaining("same path");
+    }
+
+    @Test
+    void rejectsFrontmatterThatPointsAtItself() {
+        // A YAML alias may name its own ancestor, and SnakeYAML builds that object graph without
+        // complaint. Nothing here recurses, so it used to reach Jackson — which refuses a structure
+        // with no bottom and threw, answering 500 for an upload that is plainly bad, on the one
+        // endpoint a client expects a 400 from.
+        assertThatThrownBy(() -> validator.validate(Zips.ofText(Map.of(
+                "SKILL.md", "---\nname: cyclic\ndescription: d\na: &x\n  self: *x\n---\n"))))
+                .isInstanceOf(IngestException.class)
+                .hasMessageContaining("refers to an ancestor");
+    }
+
+    @Test
     void rejectsAFieldOfTheWrongShapeRatherThanStringifyingIt() {
         assertThatThrownBy(() -> validator.validate(Zips.ofText(Map.of(
                 "SKILL.md", "---\nname: pdf-tools\ndescription:\n  nested: value\n---\n"))))
@@ -172,11 +249,17 @@ class SkillUploadValidatorTest {
     @Test
     void enforcesTheByteCeilingOnWhatIsActuallyDeliveredNotOnWhatIsDeclared() {
         // The declared sizes in a zip header can be lies; the reader counts bytes as it reads.
+        //
+        // The fixture has to be one. With honest headers the declared total is checked first and
+        // this test never reaches the counting bound its name is about: delete that bound and the
+        // suite still passed. Declaring zero is the extreme of the lie, and the deflate stream
+        // still delivers its 500 bytes.
         SkillUploadValidator tiny = new SkillUploadValidator(new IngestLimits(512, 100));
+        byte[] lyingAboutItsSize = Zips.withDeclaredSize(
+                Zips.ofText(Map.of("SKILL.md", validSkillMd(), "big.md", "x".repeat(500))),
+                "big.md", 0);
 
-        assertThatThrownBy(() -> tiny.validate(Zips.ofText(Map.of(
-                "SKILL.md", validSkillMd(),
-                "big.md", "x".repeat(500)))))
+        assertThatThrownBy(() -> tiny.validate(lyingAboutItsSize))
                 .isInstanceOf(IngestException.class)
                 .hasMessageContaining("exceeds 100 bytes");
     }

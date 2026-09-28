@@ -5,10 +5,12 @@ server, and blob storage ([technical design](../../docs/versions/v1-hosting/tech
 §2.2). **Java 25 (LTS) + Spring Boot 4 / Spring Security 7**
 ([ADR 0011](../../docs/decisions/0011-server-and-cli-stack.md)).
 
-**P0a is implemented**: publishing a skill, the four read endpoints, search, and the gateway's
-discovery channel, over PostgreSQL. The authorization server, login and registration are P1, so
-today the API authenticates with a single static token. The phasing is in
-[`technical-design.md`](../../docs/versions/v1-hosting/technical-design.md) §7.
+**P0a and P0c are implemented**: publishing a skill, the four read endpoints, search, and the
+gateway's discovery channel, over PostgreSQL. A skill is addressed as `namespace/name[@version]`
+([ADR 0012](../../docs/decisions/0012-addressing-and-version-pinning.md)), so the detail response
+hands out a URI per file with the version already written into it. The authorization server, login
+and registration are P1, so today the API authenticates with a single static token. The phasing is
+in [`technical-design.md`](../../docs/versions/v1-hosting/technical-design.md) §7.
 
 ## Toolchain
 
@@ -51,6 +53,7 @@ above, and the archive's directory must be named after the skill (§1.3):
 ```bash
 TOKEN=...                                                   # same value as the export above
 API=http://localhost:8080/v1
+SKILL=demo/feishu-tasks                                     # namespace/name — the namespace is the owner's handle
 
 mkdir -p /tmp/demo/feishu-tasks/references
 printf -- '---\nname: feishu-tasks\ndescription: 飞书任务\n---\n# 飞书任务\n\n读 `references/fields.md`。\n' \
@@ -61,15 +64,17 @@ printf '# 字段\n' > /tmp/demo/feishu-tasks/references/fields.md
 # publish — 201 the first time, 200 with created:false if the content is unchanged
 curl -sS -X POST "$API/skills" -H "Authorization: Bearer $TOKEN" \
   -F file=@/tmp/feishu-tasks.zip
-ID=...                                                      # the id from that response
 
-# L1 — search, then the full manifest and no content
+# L1 — search, then the full manifest and no content. The detail resolves the version and writes
+# it into every file's uri, which is what the two calls below follow.
 curl -sS "$API/skills?q=飞书" -H "Authorization: Bearer $TOKEN"
-curl -sS "$API/skills/$ID" -H "Authorization: Bearer $TOKEN"
+curl -sS "$API/skills/$SKILL" -H "Authorization: Bearer $TOKEN"
+VERSION=...                                                 # version.number from that response
 
-# L2 and L3 — the bytes themselves
-curl -sS "$API/skills/$ID/body" -H "Authorization: Bearer $TOKEN"
-curl -sS "$API/skills/$ID/files/references/fields.md" -H "Authorization: Bearer $TOKEN"
+# L2 and L3 — the bytes themselves. Drop the @VERSION and these resolve `latest` afresh instead,
+# which is how a manifest and the bytes fetched from it come to disagree after someone publishes.
+curl -sS "$API/skills/$SKILL@$VERSION/body" -H "Authorization: Bearer $TOKEN"
+curl -sS "$API/skills/$SKILL@$VERSION/files/references/fields.md" -H "Authorization: Bearer $TOKEN"
 
 # the anonymous discovery channel — no token, and a real 404 until the gateway is published
 curl -sS "http://localhost:8080/.well-known/agent-skills/index.json"

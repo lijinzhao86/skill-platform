@@ -21,7 +21,8 @@ public record PublishResponse(
         boolean created,
         Version version) {
 
-    public record Version(String digest, int fileCount, long totalBytes, String publishedAt) {
+    public record Version(int number, String digest, int fileCount, long totalBytes,
+            String publishedAt) {
     }
 
     public static PublishResponse of(PublishedSkill published) {
@@ -31,6 +32,7 @@ public record PublishResponse(
                 published.namespaceSlug(),
                 published.created(),
                 new Version(
+                        published.number(),
                         // The stored digest is bare lowercase hex; the API presents it prefixed, as
                         // §4.2 shows. Storage follows ADR 0005's formula literally and the prefix is
                         // a presentation concern.

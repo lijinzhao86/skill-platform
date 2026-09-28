@@ -28,6 +28,10 @@ import org.springframework.test.context.jdbc.Sql;
  * of 400 or 404 comes back depends on which layer notices first — the firewall, the router, or the
  * manifest lookup — and pinning the layer would make this test fail on a Tomcat upgrade for no
  * reason. What must never happen is 200 (a leaked file) or 5xx (an unhandled rejection).
+ *
+ * <p>The fixture publishes one version, so every address here is unversioned and resolves to it.
+ * What a pinned address does, and that the URIs the manifest advertises actually resolve, is
+ * {@code SkillVersionPinIT}'s subject.
  */
 @Sql("/sql/truncate-business-tables.sql")
 class SkillContentIT extends AbstractIT {
@@ -36,6 +40,10 @@ class SkillContentIT extends AbstractIT {
     private static final String DEMO_USER_ID = "01M3HTG7GCCVBGRPAFFSVSF12W";
     private static final String OTHER_NAMESPACE_ID = "01M3HTGC79CHKDB4Q0T2JMRCWV";
     private static final String OTHER_USER_ID = "01M3HTG7GDQ71Q28CCP7J0HM8T";
+
+    /** The fixture's address: the namespace slug comes from V2's seed, the name from the fixture. */
+    private static final String DEMO_SKILL = "/v1/skills/demo/pdf-tools";
+    private static final String OTHER_SKILL = "/v1/skills/other/pdf-tools";
 
     /** Non-ASCII on purpose: a charset mistake on a text type shows up as mojibake, not as a diff. */
     private static final String SKILL_MD = """
@@ -52,9 +60,9 @@ class SkillContentIT extends AbstractIT {
 
     @Test
     void servesTheBodyByteForByte() {
-        String id = insertSkill();
+        insertSkill();
 
-        HttpResponse<byte[]> response = getBytes("/v1/skills/" + id + "/body");
+        HttpResponse<byte[]> response = getBytes(DEMO_SKILL + "/body");
 
         assertThat(response.statusCode()).isEqualTo(200);
         assertThat(response.body())
@@ -66,7 +74,9 @@ class SkillContentIT extends AbstractIT {
     void declaresTheBodyAsUtf8Markdown() {
         // Not decoration: HTTP gives text/* a default charset of ISO-8859-1, so without this a
         // client taking the default at its word renders the Chinese above as mojibake.
-        HttpResponse<byte[]> response = getBytes("/v1/skills/" + insertSkill() + "/body");
+        insertSkill();
+
+        HttpResponse<byte[]> response = getBytes(DEMO_SKILL + "/body");
 
         assertThat(response.headers().firstValue(HttpHeaders.CONTENT_TYPE).orElseThrow())
                 .startsWith("text/markdown")
@@ -75,10 +85,9 @@ class SkillContentIT extends AbstractIT {
 
     @Test
     void servesASingleFileByteForByte() {
-        String id = insertSkill();
+        insertSkill();
 
-        HttpResponse<byte[]> response =
-                getBytes("/v1/skills/" + id + "/files/references/checklist.md");
+        HttpResponse<byte[]> response = getBytes(DEMO_SKILL + "/files/references/checklist.md");
 
         assertThat(response.statusCode())
                 .as("status %s, headers %s, body: %s", response.statusCode(), response.headers(),
@@ -93,44 +102,57 @@ class SkillContentIT extends AbstractIT {
     void servesSkillMdThroughL3AsWellAsThroughL2() {
         // SKILL.md is a manifest entry like any other (§1.3): it is not a special case that lives
         // outside the file set, and L3 must reach it too.
-        String id = insertSkill();
+        insertSkill();
 
-        assertThat(getBytes("/v1/skills/" + id + "/files/SKILL.md").body())
-                .isEqualTo(getBytes("/v1/skills/" + id + "/body").body());
+        assertThat(getBytes(DEMO_SKILL + "/files/SKILL.md").body())
+                .isEqualTo(getBytes(DEMO_SKILL + "/body").body());
     }
 
     @Test
     void guessesTheTypeFromTheExtensionAndFallsBackToOctetStream() {
-        String id = insertSkill();
+        insertSkill();
 
-        assertThat(contentTypeOf(id, "references/checklist.md")).startsWith("text/markdown");
-        assertThat(contentTypeOf(id, "notes.json")).isEqualTo("application/json;charset=UTF-8");
-        assertThat(contentTypeOf(id, "logo.png")).isEqualTo("image/png");
-        assertThat(contentTypeOf(id, "Makefile"))
+        assertThat(contentTypeOf("references/checklist.md")).startsWith("text/markdown");
+        assertThat(contentTypeOf("notes.json")).isEqualTo("application/json;charset=UTF-8");
+        assertThat(contentTypeOf("logo.png")).isEqualTo("image/png");
+        assertThat(contentTypeOf("Makefile"))
                 .as("no extension is not a guess: octet-stream is the honest answer")
                 .isEqualTo("application/octet-stream");
-        assertThat(contentTypeOf(id, "archive.v1"))
+        assertThat(contentTypeOf("archive.v1"))
                 .as("an unknown extension is not treated as one we know")
                 .isEqualTo("application/octet-stream");
     }
 
     @Test
     void aFileThatIsNotInTheManifestIsNotFound() {
-        assertThat(getBytes("/v1/skills/" + insertSkill() + "/files/references/missing.md")
-                .statusCode()).isEqualTo(404);
+        // §4.1 gives this its own code rather than folding it into skill_not_found: the address did
+        // resolve — the skill and the version both exist and the caller may read them — and only the
+        // file is absent. A client written against that table can match it.
+        insertSkill();
+
+        HttpResponse<byte[]> response = getBytes(DEMO_SKILL + "/files/references/missing.md");
+
+        assertThat(response.statusCode()).isEqualTo(404);
+        assertThat(new String(response.body(), StandardCharsets.UTF_8))
+                .contains("\"code\":\"file_not_found\"");
     }
 
     @Test
     void anotherUsersFileIsNotFound() {
-        String id = insertSkill(OTHER_NAMESPACE_ID, OTHER_USER_ID);
+        insertSkill(OTHER_NAMESPACE_ID, OTHER_USER_ID);
 
-        assertThat(getBytes("/v1/skills/" + id + "/files/SKILL.md").statusCode()).isEqualTo(404);
-        assertThat(getBytes("/v1/skills/" + id + "/body").statusCode()).isEqualTo(404);
+        HttpResponse<byte[]> response = getBytes(OTHER_SKILL + "/files/SKILL.md");
+
+        assertThat(response.statusCode()).isEqualTo(404);
+        assertThat(new String(response.body(), StandardCharsets.UTF_8))
+                .as("skill_not_found, never file_not_found: the second would confirm the skill exists")
+                .contains("\"code\":\"skill_not_found\"");
+        assertThat(getBytes(OTHER_SKILL + "/body").statusCode()).isEqualTo(404);
     }
 
     @Test
     void traversalAttemptsNeverServeAFileAndNeverCrash() {
-        String id = insertSkill();
+        insertSkill();
         // All percent-encoded where the raw character would not survive URI construction: a real
         // client cannot put a backslash in a path either, so the encoded form is the one that
         // actually reaches a server.
@@ -147,7 +169,7 @@ class SkillContentIT extends AbstractIT {
         };
 
         for (String attempt : attempts) {
-            HttpResponse<byte[]> response = getBytes("/v1/skills/" + id + "/files/" + attempt);
+            HttpResponse<byte[]> response = getBytes(DEMO_SKILL + "/files/" + attempt);
             assertThat(response.statusCode())
                     .as("%s must not be served and must not crash the server", attempt)
                     .isIn(400, 404);
@@ -159,10 +181,20 @@ class SkillContentIT extends AbstractIT {
 
     @Test
     void anEmptyPathAfterFilesIsNotAFreeLookup() {
-        // `{*relpath}` requires at least one character; without it the request would have to be
-        // routed somewhere, and "somewhere" must not be a lookup of the empty string.
-        assertThat(getBytes("/v1/skills/" + insertSkill() + "/files/").statusCode())
-                .isIn(400, 404);
+        // `{*relpath}` takes zero or more characters, so this request does route — with an empty
+        // relpath, which must be looked up like any other and find nothing.
+        //
+        // Asserted by code rather than by status alone, which is what the traversal cases above
+        // settle for deliberately: "404" cannot tell a route that never matched from a manifest
+        // lookup that found nothing, and those are different failures to diagnose.
+        insertSkill();
+
+        HttpResponse<byte[]> response = getBytes(DEMO_SKILL + "/files/");
+
+        assertThat(response.statusCode()).isEqualTo(404);
+        assertThat(new String(response.body(), StandardCharsets.UTF_8))
+                .as("it reached the manifest and found nothing, rather than never being routed")
+                .contains("\"code\":\"file_not_found\"");
     }
 
     // ---------------------------------------------------------------------------------------
@@ -176,18 +208,18 @@ class SkillContentIT extends AbstractIT {
             "Makefile", "all:\n".getBytes(StandardCharsets.UTF_8),
             "archive.v1", "opaque".getBytes(StandardCharsets.UTF_8));
 
-    private String contentTypeOf(String skillId, String relpath) {
-        HttpResponse<byte[]> response = getBytes("/v1/skills/" + skillId + "/files/" + relpath);
+    private String contentTypeOf(String relpath) {
+        HttpResponse<byte[]> response = getBytes(DEMO_SKILL + "/files/" + relpath);
         assertThat(response.statusCode()).as("%s should exist", relpath).isEqualTo(200);
         return response.headers().firstValue(HttpHeaders.CONTENT_TYPE).orElseThrow();
     }
 
-    private String insertSkill() {
-        return insertSkill(DEMO_NAMESPACE_ID, DEMO_USER_ID);
+    private void insertSkill() {
+        insertSkill(DEMO_NAMESPACE_ID, DEMO_USER_ID);
     }
 
     /** Inserts a live skill whose manifest holds SKILL.md, a nested reference, and type fixtures. */
-    private String insertSkill(String namespaceId, String userId) {
+    private void insertSkill(String namespaceId, String userId) {
         String skillId = Ulid.generate();
         String versionId = Ulid.generate();
         String at = "2026-09-28T00:00:00Z";
@@ -210,9 +242,9 @@ class SkillContentIT extends AbstractIT {
 
         long total = files.values().stream().mapToLong(f -> f.length).sum();
         jdbc.sql("""
-                INSERT INTO skill_version (id, skill_id, digest, file_count, total_bytes,
+                INSERT INTO skill_version (id, skill_id, number, digest, file_count, total_bytes,
                                            changelog, source, published_by, published_at)
-                VALUES (:id, :skill, :digest, :count, :total, '', 'zip', :user, :at)
+                VALUES (:id, :skill, 1, :digest, :count, :total, '', 'zip', :user, :at)
                 """)
                 .param("id", versionId).param("skill", skillId)
                 .param("digest", sha256Hex(("digest of " + skillId).getBytes(StandardCharsets.UTF_8)))
@@ -229,7 +261,6 @@ class SkillContentIT extends AbstractIT {
                     .param("version", versionId).param("relpath", relpath).param("sha", sha)
                     .param("size", bytes.length).update();
         });
-        return skillId;
     }
 
     private String insertBlob(byte[] bytes) {

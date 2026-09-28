@@ -5,8 +5,9 @@
 -- publishing or deleting, and leaving it in place would make a test's result depend on which
 -- tests ran before it.
 --
--- RESTART IDENTITY is required rather than cosmetic: audit_event.id is GENERATED ALWAYS AS
--- IDENTITY, and a test asserting on id 1 would otherwise pass or fail by ordering.
+-- RESTART IDENTITY is conventional rather than required: no test asserts on a particular id, and
+-- every audit assertion counts rows instead. Resetting the counter only keeps a truncated table
+-- indistinguishable from a freshly migrated one, which is what makes a failing row readable.
 --
 -- Not truncated: namespace_member and the P1 auth tables (credential, identity, browser_session,
 -- oauth_client, auth_code, access_token, refresh_token). P0a never writes them, so emptying them

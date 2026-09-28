@@ -40,6 +40,15 @@ public record RelevanceWeights(int name, int title, int description) {
                     "weights must not increase down the fields: name=" + name
                             + " title=" + title + " description=" + description);
         }
+        // The score is the three weights added and nothing else — the query uses each one as a
+        // CASE's result, never multiplied by a count — so the sum is the whole magnitude, and the
+        // bound is exact rather than a guess. Past it, PostgreSQL raises "integer out of range" on
+        // every search, which is the sort of misconfiguration worth hearing about at startup.
+        long total = (long) name + title + description;
+        if (total > Integer.MAX_VALUE) {
+            throw new IllegalArgumentException("weights add up past what the score can hold: "
+                    + name + "+" + title + "+" + description + "=" + total);
+        }
     }
 
     /**

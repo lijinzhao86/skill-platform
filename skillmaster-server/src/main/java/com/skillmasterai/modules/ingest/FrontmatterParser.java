@@ -43,6 +43,16 @@ public final class FrontmatterParser {
 
     private static final int MAX_YAML_ALIASES = 10;
 
+    /**
+     * Deep enough for any real frontmatter, shallow enough to stop a cycle before it becomes one.
+     *
+     * <p>A YAML alias may point at its own ancestor — {@code a: &x {self: *x}} is two lines and
+     * SnakeYAML builds that object graph without complaint. Nothing here recurses, so it used to
+     * reach Jackson, which refuses a structure that deep and threw — answering 500 for what is
+     * plainly a bad upload, on the one endpoint a client expects a 400 from.
+     */
+    private static final int MAX_FRONTMATTER_DEPTH = 32;
+
     public static Map<String, Object> parse(byte[] skillMd) {
         String text = decode(skillMd);
 
@@ -89,10 +99,36 @@ public final class FrontmatterParser {
                     "SKILL.md's frontmatter must be a YAML mapping of fields",
                     "SKILL.md", "frontmatter_not_a_mapping");
         }
+        requireBoundedDepth(parsed, 1);
 
         Map<String, Object> fields = new LinkedHashMap<>();
         raw.forEach((key, value) -> fields.put(String.valueOf(key), value));
         return fields;
+    }
+
+    /**
+     * Refuses a value with no bottom, before anything tries to walk it.
+     *
+     * <p>Both a cycle and a genuinely absurd nesting reach the same limit, which is why one check
+     * covers both: a self-referential node recurses forever and a deep one runs out of levels. The
+     * cost of the limit being generous is nothing — frontmatter is a mapping of scalars with the
+     * occasional nested {@code metadata}.
+     */
+    private static void requireBoundedDepth(Object value, int depth) {
+        if (depth > MAX_FRONTMATTER_DEPTH) {
+            throw new IngestException(
+                    "SKILL.md's frontmatter nests more than " + MAX_FRONTMATTER_DEPTH
+                            + " levels, or a node refers to an ancestor of itself",
+                    "SKILL.md", "frontmatter_too_deep");
+        }
+        if (value instanceof Map<?, ?> mapping) {
+            mapping.forEach((key, nested) -> {
+                requireBoundedDepth(key, depth + 1);
+                requireBoundedDepth(nested, depth + 1);
+            });
+        } else if (value instanceof Iterable<?> items) {
+            items.forEach(item -> requireBoundedDepth(item, depth + 1));
+        }
     }
 
     private static Object load(String block) {

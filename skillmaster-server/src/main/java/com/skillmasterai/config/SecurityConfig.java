@@ -71,7 +71,15 @@ class SecurityConfig {
                         // the same function the 403 challenge uses to name the missing scope, so
                         // the challenge cannot advertise a scope that is not actually enforced —
                         // and the contract test fails if the two ever drift apart.
+                        //
+                        // HEAD and OPTIONS are listed with GET because that function maps them to
+                        // the read scope too, and Spring serves HEAD through the GET handler. Left
+                        // out, they fell to the write rule below and were denied with a challenge
+                        // naming the read scope the caller already had. One line per method: the
+                        // registry takes several paths for one method, not several methods.
                         .requestMatchers(HttpMethod.GET, "/v1/**").hasAuthority(readAuthority())
+                        .requestMatchers(HttpMethod.HEAD, "/v1/**").hasAuthority(readAuthority())
+                        .requestMatchers(HttpMethod.OPTIONS, "/v1/**").hasAuthority(readAuthority())
                         .requestMatchers("/v1/**").hasAuthority(writeAuthority())
                         .anyRequest().authenticated())
                 // The context comes from the token, via the repository — see that class for why

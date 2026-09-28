@@ -42,6 +42,33 @@ class ApiExceptionHandler {
     }
 
     /**
+     * An address that resolves to nothing — §4.1's one answer to four different failures.
+     *
+     * <p>A code rather than a bare status because clients switch on {@code code}: an empty 404 body
+     * tells a client only that something went wrong, and §4.1's envelope exists so that every failure
+     * has the same shape. That all four share {@code skill_not_found} is the point — see
+     * {@link SkillNotFoundException}.
+     */
+    @ExceptionHandler(SkillNotFoundException.class)
+    ResponseEntity<ApiError> onSkillNotFoundException(SkillNotFoundException e) {
+        return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                .body(ApiError.of(ErrorCode.SKILL_NOT_FOUND, e.getMessage()));
+    }
+
+    /**
+     * §4.1's other 404: the address resolved to a version, and its manifest has no such file.
+     *
+     * <p>A distinct code from {@code skill_not_found} because it is a distinct answer — the skill
+     * and the version both exist and the caller can read them. See
+     * {@link FileNotInManifestException}.
+     */
+    @ExceptionHandler(FileNotInManifestException.class)
+    ResponseEntity<ApiError> onFileNotInManifestException(FileNotInManifestException e) {
+        return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                .body(ApiError.of(ErrorCode.FILE_NOT_FOUND, e.getMessage()));
+    }
+
+    /**
      * A publish to the name of a soft-deleted skill (§4.3 gives restoring its own endpoint).
      *
      * <p>400 rather than 409: the request is well-formed and the conflict is real, but the only
@@ -127,7 +154,11 @@ class ApiExceptionHandler {
                 return internalError();
             }
             log.debug("request rejected with {}", status, e);
+            // The framework's headers are kept: a 405's Allow is required by RFC 9110, and
+            // rebuilding the response without it told a client its method was wrong without saying
+            // which one would work.
             return ResponseEntity.status(status)
+                    .headers(errorResponse.getHeaders())
                     .body(ApiError.of(codeFor(status), "the request could not be handled"));
         }
 
@@ -140,7 +171,23 @@ class ApiExceptionHandler {
                 .body(ApiError.of(ErrorCode.INTERNAL_ERROR, "an unexpected error occurred"));
     }
 
+    /**
+     * The code §4.1 pairs with the status, not one code for the whole 4xx band.
+     *
+     * <p>Every 404 is {@code skill_not_found}, including one Spring raised for a path nothing is
+     * mapped to — §4.1 gives the answer "this address names nothing" one code, and a client that
+     * switches on {@code code} should never have to reconcile it against the status it arrived
+     * with. Reporting a 404 as {@code invalid_request} did exactly that: the table assigns that
+     * code to 400 and nothing else.
+     *
+     * <p>A route Spring does not know answers the same code, which is deliberate rather than an
+     * oversight: a client should not have to know which side of the router decided that an address
+     * names nothing.
+     */
     private static ErrorCode codeFor(HttpStatus status) {
+        if (status == HttpStatus.NOT_FOUND) {
+            return ErrorCode.SKILL_NOT_FOUND;
+        }
         return status.is4xxClientError() ? ErrorCode.INVALID_REQUEST : ErrorCode.INTERNAL_ERROR;
     }
 }

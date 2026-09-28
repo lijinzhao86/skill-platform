@@ -1,8 +1,10 @@
 package com.skillmasterai.modules.search;
 
 import com.skillmasterai.common.CursorCodec;
+import com.skillmasterai.common.Timestamps;
 import com.skillmasterai.modules.namespace.Namespace;
 import com.skillmasterai.modules.version.SkillCatalogService;
+import java.time.format.DateTimeParseException;
 import java.util.List;
 import java.util.Optional;
 
@@ -115,7 +117,70 @@ public final class SkillSearchService {
         if (decoded.key().size() != catalog.sortKeyWidth(byRelevance)) {
             throw new InvalidSearchRequestException("the cursor has the wrong number of key parts");
         }
+        requireKeyComponentsOfTheRightShape(decoded.key(), byRelevance);
         return Optional.of(decoded);
+    }
+
+    /**
+     * The key's components, not just how many there are.
+     *
+     * <p>The width check alone lets a hand-edited cursor through to the query, where the first
+     * component is {@code CAST(… AS integer)} — an uncastable value is a SQL error, and a SQL error
+     * on a request path is a 500 for what §4.1 calls a cursor nobody can read. The remaining
+     * components are compared as text, so a bad one would not fail at all; it would silently move
+     * the boundary, which is the skipped-or-repeated-row bug the cursor exists to prevent.
+     *
+     * <p>{@link CursorCodec} deliberately never throws — a decoder that does would turn a bad query
+     * string into a 500 by itself — so the shape check lands here, where the answer is already known
+     * to be a 400.
+     */
+    private static void requireKeyComponentsOfTheRightShape(List<String> key, boolean byRelevance) {
+        if (key.getLast().isBlank()) {
+            throw new InvalidSearchRequestException("the cursor is not one this version understands");
+        }
+        try {
+            if (byRelevance) {
+                requireCanonicalScore(key.get(0));
+                requireCanonicalTimestamp(key.get(1));
+            } else {
+                requireCanonicalTimestamp(key.get(0));
+            }
+        } catch (NumberFormatException | DateTimeParseException e) {
+            throw new InvalidSearchRequestException(
+                    "the cursor is not one this version understands");
+        }
+    }
+
+    /**
+     * The score has to be ASCII digits, because that is what the query's {@code CAST(:k0 AS
+     * integer)} accepts.
+     *
+     * <p>{@code Integer.parseInt} is looser than PostgreSQL's integer input: it accepts every
+     * Unicode decimal digit, so a key part written in Arabic-Indic digits passed the check and then
+     * died on the cast — the 500 this whole method exists to prevent. A value too large for an int
+     * is left to throw, which the caller turns into the same 400.
+     */
+    private static void requireCanonicalScore(String value) {
+        if (!value.matches("[0-9]+")) {
+            throw new InvalidSearchRequestException("the cursor is not one this version understands");
+        }
+        Integer.parseInt(value);
+    }
+
+    /**
+     * The timestamp has to be the canonical spelling, not merely a parseable one.
+     *
+     * <p>The keyset compares {@code updated_at} <em>as text</em>, which is only sound because
+     * {@link Timestamps} writes a fixed width, a fixed offset and zero padding — lexicographic order
+     * is chronological order. {@code Instant.parse} is looser than that: it accepts {@code
+     * 2026-01-01T00:00:00+00:00}, the same instant written differently, and a text comparison
+     * against it would land somewhere else entirely. Round-tripping through the formatter is what
+     * checks the property the comparison actually depends on.
+     */
+    private static void requireCanonicalTimestamp(String value) {
+        if (!Timestamps.format(Timestamps.parse(value)).equals(value)) {
+            throw new InvalidSearchRequestException("the cursor is not one this version understands");
+        }
     }
 
     /**
@@ -127,6 +192,6 @@ public final class SkillSearchService {
      */
     private static SkillCard toCard(SkillCatalogService.CatalogRow row, Namespace visible) {
         return new SkillCard(row.id(), row.name(), row.title(), row.description(), visible.slug(),
-                row.visibility(), row.digest(), row.updatedAt());
+                row.visibility(), row.number(), row.digest(), row.updatedAt());
     }
 }

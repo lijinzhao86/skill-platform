@@ -71,7 +71,11 @@ public final class SkillRepository {
     }
 
     /**
-     * The skill, if it is live and lives in the given namespace.
+     * The live skill with this name in this namespace, if there is one.
+     *
+     * <p>{@code UNIQUE(namespace_id, name)} makes this at most one row. Every read resolves its skill
+     * this way, because the address is a name rather than an id (§4.1) — the gateway included, since
+     * its id is not known until it has been published once.
      *
      * <p><strong>The namespace predicate is the whole authorization check, and that is the point
      * of putting it here.</strong> §4.2 requires an unreadable private skill to be a 404 rather
@@ -82,35 +86,9 @@ public final class SkillRepository {
      *
      * <p>The caller supplies the namespace, so this is not a general "may I see it" query: M7
      * knows which namespace a skill is in, M4 knows which namespace the caller owns, and the
-     * use-case layer is where those two facts are allowed to meet (§2.5).
-     */
-    public java.util.Optional<SkillRow> liveInNamespace(String skillId, String namespaceId) {
-        return jdbc.sql("""
-                SELECT id, namespace_id, name, title, description, frontmatter, visibility,
-                       current_version_id
-                FROM skill
-                WHERE id = :id AND namespace_id = :namespaceId AND deleted_at IS NULL
-                """)
-                .param("id", skillId)
-                .param("namespaceId", namespaceId)
-                .query((rs, rowNum) -> new SkillRow(
-                        rs.getString("id"),
-                        rs.getString("namespace_id"),
-                        rs.getString("name"),
-                        rs.getString("title"),
-                        rs.getString("description"),
-                        rs.getString("frontmatter"),
-                        rs.getString("visibility"),
-                        rs.getString("current_version_id")))
-                .optional();
-    }
-
-    /**
-     * The live skill with this name in this namespace, if there is one.
-     *
-     * <p>{@code UNIQUE(namespace_id, name)} makes this at most one row. Used by the gateway, which
-     * addresses its skill by name — the name is part of the published URL — rather than by id,
-     * because its id is not known until it has been published once.
+     * use-case layer is where those two facts are allowed to meet (§2.5). The use case does filter
+     * on the address's first segment as well, but that gate is redundant with this one and is not
+     * what the rule rests on.
      */
     public java.util.Optional<SkillRow> liveByName(String namespaceId, String name) {
         return jdbc.sql("""
@@ -133,16 +111,31 @@ public final class SkillRepository {
                 .optional();
     }
 
-    /** @return whether a live skill was deleted; false means there is no such live skill */
-    public boolean softDelete(String skillId, String namespaceId, String at) {
+    /**
+     * Soft-deletes the live skill with this name in this namespace.
+     *
+     * <p>By name rather than by id because the address is a name (§4.1). The namespace predicate
+     * stays inside the {@code UPDATE} for the reason {@link #liveByName} gives for keeping it in its
+     * own statement: there is then no window between deciding and acting, and "not yours" and "not
+     * there" are one empty result rather than two branches a later edit could pull apart.
+     *
+     * <p>{@code RETURNING id} because the caller audits the deletion, and the audit row names the
+     * skill by its identity (ADR 0004) — so a later rename cannot orphan its own trail. A by-name
+     * delete that returned only a boolean would leave {@code target_id} null for every delete.
+     *
+     * @return the id of the skill that was deleted, or empty when no such live skill exists
+     */
+    public Optional<String> softDelete(String namespaceId, String name, String at) {
         return jdbc.sql("""
                 UPDATE skill SET deleted_at = :at, updated_at = :at
-                WHERE id = :id AND namespace_id = :namespaceId AND deleted_at IS NULL
+                WHERE namespace_id = :namespaceId AND name = :name AND deleted_at IS NULL
+                RETURNING id
                 """)
                 .param("at", at)
-                .param("id", skillId)
                 .param("namespaceId", namespaceId)
-                .update() == 1;
+                .param("name", name)
+                .query(String.class)
+                .optional();
     }
 
     /**

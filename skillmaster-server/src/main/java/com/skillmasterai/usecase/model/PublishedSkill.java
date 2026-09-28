@@ -10,11 +10,13 @@ package com.skillmasterai.usecase.model;
  *
  * @param created whether this call created the version; false means identical content was already
  *                published, and {@code publishedAt} is when it was first published
+ * @param number  the skill's Nth distinct content (ADR 0012) — the {@code @N} form of its address
  */
 public record PublishedSkill(
         String skillId,
         String name,
         String namespaceSlug,
+        int number,
         String digest,
         int fileCount,
         long totalBytes,

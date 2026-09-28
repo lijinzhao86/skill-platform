@@ -8,7 +8,9 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 import org.apache.commons.compress.archivers.zip.ZipArchiveEntry;
 import org.apache.commons.compress.archivers.zip.ZipFile;
 import org.apache.commons.compress.utils.SeekableInMemoryByteChannel;
@@ -36,6 +38,10 @@ import org.apache.commons.compress.utils.SeekableInMemoryByteChannel;
  *       ever reaches this code. It is kept anyway — the property is ours, not the reader's, and it
  *       costs three lines if the reader is ever swapped. {@code ZipsTest} pins the behaviour rather
  *       than the check, since the check has no reachable input.</li>
+ *   <li><strong>Two entries with the same path.</strong> The zip format permits it and {@code
+ *       unzip} merely warns, but a skill's manifest is keyed by {@code relpath}: the second entry
+ *       would collide with the first on {@code PRIMARY KEY (version_id, relpath)} and surface as a
+ *       500 from the insert rather than as a rejected upload.</li>
  * </ul>
  *
  * <p>Decompression is bounded while reading, not merely checked against the declared size first:
@@ -57,6 +63,7 @@ public final class ZipReader {
                 .get()) {
 
             List<IngestedFile> files = new ArrayList<>();
+            Set<String> seen = new HashSet<>();
             long declaredTotal = 0;
 
             for (ZipArchiveEntry entry : Collections.list(zip.getEntries())) {
@@ -64,6 +71,10 @@ public final class ZipReader {
                     continue;
                 }
                 String relpath = validateName(entry.getName());
+                if (!seen.add(relpath)) {
+                    throw new IngestException("the upload contains two entries with the same path",
+                            relpath, "duplicate_relpath");
+                }
 
                 if (entry.isUnixSymlink()) {
                     throw new IngestException("the upload contains a symbolic link",

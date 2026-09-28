@@ -1,5 +1,6 @@
 package com.skillmasterai.usecase;
 
+import com.skillmasterai.common.Sha256Hex;
 import com.skillmasterai.modules.audit.AuditEvent;
 import com.skillmasterai.modules.audit.AuditLog;
 import com.skillmasterai.modules.auth.AuthenticatedSubject;
@@ -16,6 +17,7 @@ import com.skillmasterai.modules.version.SkillMetadata;
 import com.skillmasterai.modules.version.SkillVersionService;
 import com.skillmasterai.usecase.model.PublishedSkill;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 import org.springframework.stereotype.Component;
@@ -67,7 +69,7 @@ public class PublishSkillUseCase {
         Namespace namespace = namespaces.personalNamespaceOf(subject.userId());
 
         List<ManifestEntry> entries = new ArrayList<>(upload.files().size());
-        for (IngestedFile file : upload.files()) {
+        for (IngestedFile file : inStoreOrder(upload.files())) {
             BlobStore.BlobRef ref = blobs.put(file.bytes());
             entries.add(new ManifestEntry(file.relpath(), ref.sha256Hex(), ref.size(), file.isBinary()));
         }
@@ -84,7 +86,41 @@ public class PublishSkillUseCase {
                 Map.of("name", upload.name(), "digest", outcome.digest(), "created", outcome.created())));
 
         return new PublishedSkill(outcome.skillId(), upload.name(), namespace.slug(),
-                outcome.digest(), outcome.fileCount(), outcome.totalBytes(), outcome.publishedAt(),
-                outcome.created());
+                outcome.number(), outcome.digest(), outcome.fileCount(), outcome.totalBytes(),
+                outcome.publishedAt(), outcome.created());
+    }
+
+    /**
+     * The order the bytes are stored in, which is load-bearing rather than cosmetic.
+     *
+     * <p>Storing a file inserts or touches a row keyed by its digest, and {@code ON CONFLICT DO
+     * NOTHING} against a row another transaction has inserted but not committed <em>waits for that
+     * transaction</em>. Two publishes that share files would therefore deadlock on each other if
+     * they took those rows in different orders — which is exactly what happens when the order comes
+     * from the archive, because two authors' zips list the same shared files differently. Ordering
+     * by something derived from the content makes every publisher agree, and agreed order is what
+     * makes a cycle impossible.
+     *
+     * <p>The digest has to be computed here to establish that order, so it is computed twice for
+     * each file — {@link BlobStore#put} computes its own and must keep doing so, because M6's
+     * guarantee is that no caller can record a digest that does not describe the bytes stored.
+     * Sorting by {@code relpath} would not do: two skills sharing the same content under different
+     * names would then order it differently and the cycle would be back.
+     *
+     * <p>Hashed once per file before sorting rather than inside the comparator, which is what makes
+     * that "twice" true: a comparator that extracted the digest inline would re-hash both operands
+     * on every comparison — around fifteen times per file at the 512-file ceiling, which is
+     * hundreds of megabytes of SHA-256 spent on an ordering nobody ever sees.
+     *
+     * <p>The manifest is unaffected: {@link Manifest} sorts by {@code relpath} itself, so the
+     * version digest does not depend on the order chosen here.
+     */
+    private static List<IngestedFile> inStoreOrder(List<IngestedFile> files) {
+        return files.stream()
+                .map(file -> Map.entry(Sha256Hex.of(file.bytes()), file))
+                .sorted(Comparator.<Map.Entry<String, IngestedFile>, String>comparing(Map.Entry::getKey)
+                        .thenComparing(entry -> entry.getValue().relpath()))
+                .map(Map.Entry::getValue)
+                .toList();
     }
 }

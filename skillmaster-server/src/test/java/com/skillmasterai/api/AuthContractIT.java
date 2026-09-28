@@ -45,28 +45,32 @@ class AuthContractIT extends AbstractIT {
 
     @Test
     void challengeDoesNotEchoTheRequestPath() {
-        // A 401 must not become a way to probe which resources exist.
-        HttpResponse<String> response = get("/v1/skills/01M3HTG7GCCVBGRPAFFSVSF12W", null);
+        // A 401 must not become a way to probe which resources exist. The address is a real route
+        // shape with a marker in it, so the assertion is about the client's own text coming back:
+        // security refuses the request before any controller is chosen, and the refusal must not
+        // repeat what was asked for.
+        HttpResponse<String> response = get("/v1/skills/demo/probe-marker", null);
 
         assertThat(response.statusCode()).isEqualTo(401);
         assertThat(response.body())
-                .doesNotContain("01M3HTG7GCCVBGRPAFFSVSF12W")
+                .doesNotContain("probe-marker")
                 .contains("Authentication is required.");
     }
 
     @Test
     void anAcceptedTokenIsNeitherRejectedNorDenied() {
-        // Authorization passed. There is no controller for this route until S5, so the request
-        // then falls through to 404 — what matters here is that it is not 401 or 403, which is
-        // the observable difference between "authenticated with enough scope" and everything else.
+        // Authorization passed and the request reached a controller, which answers 200 to an
+        // authenticated listing. Asserting only "not 401 or 403" also accepted 404 and 500, so it
+        // stopped being evidence of anything once the route had a controller behind it.
         assertThat(token())
                 .as("the test profile must supply the same token the server was started with")
                 .isNotBlank();
+
         HttpResponse<String> response = get("/v1/skills", token());
 
         assertThat(response.statusCode())
                 .as("response body was: %s", response.body())
-                .isNotIn(401, 403);
+                .isEqualTo(200);
     }
 
     @Test

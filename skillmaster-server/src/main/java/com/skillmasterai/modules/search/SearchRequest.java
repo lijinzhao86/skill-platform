@@ -6,10 +6,10 @@ package com.skillmasterai.modules.search;
  * <p>Validated at construction rather than deep in the query, so that a bad request fails before
  * any SQL runs and the failure carries the parameter's name.
  *
- * @param query          the search text, or null for "everything, in the requested order". Null
- *                       rather than empty because the two differ in the SQL: no pattern means no
- *                       text tier at all, while an empty pattern would match every row and give
- *                       every skill the same score.
+ * @param query          the search text, or null for "everything, in the requested order". An
+ *                       empty string means the same thing rather than a third behaviour: the
+ *                       pattern builder turns both into no pattern at all, so {@code ?q=} and a
+ *                       request with no {@code q} produce one query, not two.
  * @param namespaceSlug  narrows to one namespace <em>within</em> what the caller may see; it is not
  *                       a way to widen. §4.2 is explicit that it is a filter, not a bypass.
  * @param sort           {@code relevance} (the default) or {@code recent}

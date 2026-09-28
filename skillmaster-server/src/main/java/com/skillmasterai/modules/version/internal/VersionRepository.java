@@ -25,14 +25,36 @@ public final class VersionRepository {
      * concurrent uncommitted insert of the same digest and then correctly finds the committed row.
      * This is ADR 0005's "幂等由唯一约束直接实现，不需要先查再写" made concrete.
      *
+     * <p><strong>The number is allocated here, but its serialisation comes from the caller.</strong>
+     * {@code MAX(number) + 1} in the statement below is safe only because the publish path takes the
+     * {@code skill} row's lock first: {@link SkillRepository#upsertLive}'s {@code ON CONFLICT … DO
+     * UPDATE} locks that row before its {@code WHERE} is even evaluated, so the lock is held even
+     * when the update is filtered out. Two concurrent publishes of one skill therefore queue on it
+     * and cannot interleave. That is an <em>unenforced</em> convention — a second writer that skips
+     * {@code upsertLive}, or a raised isolation level (the subquery would read a stale snapshot),
+     * breaks it. It breaks loudly rather than quietly: whatever the failure, it arrives as a SQL
+     * error rather than as two contents sharing a number.
+     *
+     * <p>Deliberately <em>not</em> {@code ON CONFLICT (skill_id, number) DO NOTHING}: that would turn
+     * a broken invariant into silent aliasing — two contents sharing one number, which is exactly the
+     * property ADR 0012 says {@code @3} must never lose. A constraint violation here is the correct
+     * alarm, so it is left to surface as one.
+     *
+     * <p>And deliberately not a sequence: {@code MAX(number) + 1} leaves no gap when a transaction
+     * rolls back, whereas a sequence is non-transactional and would burn numbers and hand them out
+     * out of order. Consuming nothing on the conflict branch is the same property, one case over.
+     *
      * @return the new version's id, or empty when identical content was already published
      */
     public Optional<String> insertIfAbsent(String skillId, String digest, int fileCount,
             long totalBytes, String source, String publishedBy, String at) {
         return jdbc.sql("""
-                INSERT INTO skill_version (id, skill_id, digest, file_count, total_bytes,
+                INSERT INTO skill_version (id, skill_id, number, digest, file_count, total_bytes,
                                            changelog, source, published_by, published_at)
-                VALUES (:id, :skillId, :digest, :fileCount, :totalBytes,
+                VALUES (:id, :skillId,
+                        (SELECT COALESCE(MAX(number), 0) + 1 FROM skill_version
+                         WHERE skill_id = :skillId),
+                        :digest, :fileCount, :totalBytes,
                         '', :source, :publishedBy, :at)
                 ON CONFLICT (skill_id, digest) DO NOTHING
                 RETURNING id
@@ -74,13 +96,39 @@ public final class VersionRepository {
     /** The authoritative row for a published version, however it got there. */
     public Optional<VersionRow> findBySkillAndDigest(String skillId, String digest) {
         return jdbc.sql("""
-                SELECT id, digest, file_count, total_bytes, published_at
+                SELECT id, number, digest, file_count, total_bytes, published_at
                 FROM skill_version WHERE skill_id = :skillId AND digest = :digest
                 """)
                 .param("skillId", skillId)
                 .param("digest", digest)
                 .query((rs, rowNum) -> new VersionRow(
                         rs.getString("id"),
+                        rs.getInt("number"),
+                        rs.getString("digest"),
+                        rs.getInt("file_count"),
+                        rs.getLong("total_bytes"),
+                        rs.getString("published_at")))
+                .optional();
+    }
+
+    /**
+     * A version by its immutable alias — §4.1's {@code @3}.
+     *
+     * <p>A number is not an identity (the digest is), but {@code UNIQUE (skill_id, number)} makes it
+     * a stable name for one piece of content, which is what an address needs. It is resolved through
+     * the skill rather than globally because numbers are per-skill: {@code @3} means the third
+     * version of <em>this</em> skill, and {@code @3} of another skill is unrelated content.
+     */
+    public Optional<VersionRow> findBySkillAndNumber(String skillId, int number) {
+        return jdbc.sql("""
+                SELECT id, number, digest, file_count, total_bytes, published_at
+                FROM skill_version WHERE skill_id = :skillId AND number = :number
+                """)
+                .param("skillId", skillId)
+                .param("number", number)
+                .query((rs, rowNum) -> new VersionRow(
+                        rs.getString("id"),
+                        rs.getInt("number"),
                         rs.getString("digest"),
                         rs.getInt("file_count"),
                         rs.getLong("total_bytes"),
@@ -90,12 +138,13 @@ public final class VersionRepository {
 
     public Optional<VersionRow> findById(String versionId) {
         return jdbc.sql("""
-                SELECT id, digest, file_count, total_bytes, published_at
+                SELECT id, number, digest, file_count, total_bytes, published_at
                 FROM skill_version WHERE id = :id
                 """)
                 .param("id", versionId)
                 .query((rs, rowNum) -> new VersionRow(
                         rs.getString("id"),
+                        rs.getInt("number"),
                         rs.getString("digest"),
                         rs.getInt("file_count"),
                         rs.getLong("total_bytes"),
@@ -125,7 +174,7 @@ public final class VersionRepository {
         return Manifest.of(entries);
     }
 
-    public record VersionRow(String id, String digest, int fileCount, long totalBytes,
+    public record VersionRow(String id, int number, String digest, int fileCount, long totalBytes,
             String publishedAt) {
     }
 }

@@ -24,6 +24,10 @@ import tools.jackson.databind.json.JsonMapper;
  * <p>The skill is inserted directly rather than published, because what is under test is the read
  * path. {@code SkillPublishIT} owns the write path, and going through it would make a failure here
  * ambiguous between the two.
+ *
+ * <p>The fixture has one version, numbered 1, so the addresses below are all {@code demo/pdf-tools}.
+ * What a second version does to an address — and to the URIs the manifest advertises — is
+ * {@code SkillVersionPinIT}'s subject.
  */
 @Sql("/sql/truncate-business-tables.sql")
 class SkillDetailIT extends AbstractIT {
@@ -48,7 +52,7 @@ class SkillDetailIT extends AbstractIT {
     void returnsTheWholeManifestAndNoContent() {
         String id = insertSkill(DEMO_NAMESPACE_ID, DEMO_USER_ID, "pdf-tools");
 
-        HttpResponse<String> response = get("/v1/skills/" + id, token());
+        HttpResponse<String> response = get("/v1/skills/demo/pdf-tools", token());
 
         assertThat(response.statusCode()).isEqualTo(200);
         JsonNode body = JSON.readTree(response.body());
@@ -56,20 +60,30 @@ class SkillDetailIT extends AbstractIT {
         assertThat(body.propertyNames()).containsExactlyInAnyOrder("id", "name", "title",
                 "description", "namespace", "visibility", "frontmatter", "version", "files",
                 "resources");
+        // The id is still reported — it is the skill's identity — it just no longer addresses it.
         assertThat(body.get("id").asText()).isEqualTo(id);
         assertThat(body.get("name").asText()).isEqualTo("pdf-tools");
         assertThat(body.get("namespace").get("slug").asText()).isEqualTo("demo");
         assertThat(body.get("namespace").get("title").asText()).isEqualTo("Demo owner");
         assertThat(body.get("visibility").asText()).isEqualTo("private");
         assertThat(body.get("version").propertyNames()).containsExactlyInAnyOrder(
-                "digest", "published_at", "file_count", "total_bytes");
+                "number", "digest", "published_at", "file_count", "total_bytes", "is_latest");
+        assertThat(body.get("version").get("number").asInt())
+                .as("the address carried no version, so the current one was resolved")
+                .isEqualTo(1);
+        assertThat(body.get("version").get("is_latest").asBoolean())
+                .as("and the response says so, which is how a client learns what it is reading")
+                .isTrue();
         assertThat(body.get("version").get("digest").asText()).matches("sha256:[0-9a-f]{64}");
         assertThat(body.get("version").get("file_count").asInt()).isEqualTo(2);
         assertThat(body.get("version").get("total_bytes").asLong())
                 .isEqualTo(BODY.length() + CHECKLIST.length());
-        assertThat(body.get("resources").get("body").asText()).isEqualTo("/v1/skills/{id}/body");
-        assertThat(body.get("resources").get("file").asText())
-                .isEqualTo("/v1/skills/{id}/files/{relpath}");
+
+        // The resources carry no {relpath} template beside them: two ways to spell one URL would be
+        // a second source of truth, and §4.2 requires each file to carry its own pinned URI instead.
+        assertThat(body.get("resources").propertyNames()).containsExactly("body");
+        assertThat(body.get("resources").get("body").asText())
+                .isEqualTo("/v1/skills/demo/pdf-tools@1/body");
     }
 
     @Test
@@ -77,17 +91,24 @@ class SkillDetailIT extends AbstractIT {
         // Order comes from the Manifest record, not from the query: the digest and this list have
         // to agree, and PostgreSQL's collation is one of the orders that would disagree. The
         // fixture inserts them in the opposite order, so a query relying on heap order shows up.
-        String id = insertSkill(DEMO_NAMESPACE_ID, DEMO_USER_ID, "pdf-tools");
+        insertSkill(DEMO_NAMESPACE_ID, DEMO_USER_ID, "pdf-tools");
 
-        HttpResponse<String> response = get("/v1/skills/" + id, token());
+        HttpResponse<String> response = get("/v1/skills/demo/pdf-tools", token());
         JsonNode files = JSON.readTree(response.body()).get("files");
 
         assertThat(files).hasSize(2);
         assertThat(files.get(0).get("relpath").asText()).isEqualTo("SKILL.md");
         assertThat(files.get(1).get("relpath").asText()).isEqualTo("references/checklist.md");
         assertThat(files.get(0).propertyNames())
-                .containsExactlyInAnyOrder("relpath", "sha256", "size", "is_binary");
+                .containsExactlyInAnyOrder("relpath", "uri", "sha256", "size", "is_binary");
         assertThat(files.get(0).get("sha256").asText()).matches("sha256:[0-9a-f]{64}");
+
+        // Each URI is the file's address with the version already written into it — the mechanism
+        // that lets a client follow the manifest without ever asking for `latest` again.
+        assertThat(files.get(0).get("uri").asText())
+                .isEqualTo("/v1/skills/demo/pdf-tools@1/files/SKILL.md");
+        assertThat(files.get(1).get("uri").asText())
+                .isEqualTo("/v1/skills/demo/pdf-tools@1/files/references/checklist.md");
 
         // "No content" is the whole point of the endpoint: this manifest is what lets an agent
         // decide whether to fetch anything, and it cannot do that if the answer already holds the
@@ -103,9 +124,9 @@ class SkillDetailIT extends AbstractIT {
         // §3.3: unknown fields are stored and returned, which is what the archived baseline got
         // wrong. A nested mapping is the shape most likely to be flattened by an implementation
         // that "helpfully" understood the schema.
-        String id = insertSkill(DEMO_NAMESPACE_ID, DEMO_USER_ID, "pdf-tools");
+        insertSkill(DEMO_NAMESPACE_ID, DEMO_USER_ID, "pdf-tools");
 
-        JsonNode frontmatter = JSON.readTree(get("/v1/skills/" + id, token()).body())
+        JsonNode frontmatter = JSON.readTree(get("/v1/skills/demo/pdf-tools", token()).body())
                 .get("frontmatter");
 
         assertThat(frontmatter.isObject())
@@ -118,9 +139,9 @@ class SkillDetailIT extends AbstractIT {
 
     @Test
     void anotherUsersSkillIsNotFoundRatherThanForbidden() {
-        String id = insertSkill(OTHER_NAMESPACE_ID, OTHER_USER_ID, "not-mine");
+        insertSkill(OTHER_NAMESPACE_ID, OTHER_USER_ID, "not-mine");
 
-        HttpResponse<String> response = get("/v1/skills/" + id, token());
+        HttpResponse<String> response = get("/v1/skills/other/not-mine", token());
 
         assertThat(response.statusCode())
                 .as("a 403 would confirm the skill exists; §4.2 requires 404")
@@ -131,10 +152,15 @@ class SkillDetailIT extends AbstractIT {
     }
 
     @Test
-    void anUnknownIdIsIndistinguishableFromAnotherUsersId() {
-        HttpResponse<String> unknown = get("/v1/skills/" + Ulid.generate(), token());
-        HttpResponse<String> someones = get(
-                "/v1/skills/" + insertSkill(OTHER_NAMESPACE_ID, OTHER_USER_ID, "not-mine"), token());
+    void anUnknownSkillIsIndistinguishableFromAnotherUsers() {
+        // Both go through real routes and differ only in whether a row exists — the first names a
+        // skill nobody published, the second a skill that exists but belongs to someone else. §4.1
+        // requires one answer, so the two responses must be byte-identical, not merely the same
+        // status.
+        insertSkill(OTHER_NAMESPACE_ID, OTHER_USER_ID, "not-mine");
+
+        HttpResponse<String> unknown = get("/v1/skills/demo/nothing-like-this", token());
+        HttpResponse<String> someones = get("/v1/skills/other/not-mine", token());
 
         assertThat(unknown.statusCode()).isEqualTo(someones.statusCode());
         assertThat(unknown.body()).isEqualTo(someones.body());
@@ -146,15 +172,25 @@ class SkillDetailIT extends AbstractIT {
         jdbc.sql("UPDATE skill SET deleted_at = :at WHERE id = :id")
                 .param("at", Timestamps.now()).param("id", id).update();
 
-        assertThat(get("/v1/skills/" + id, token()).statusCode()).isEqualTo(404);
+        assertThat(get("/v1/skills/demo/pdf-tools", token()).statusCode())
+                .as("the versions and their files are all still there; only the skill is not")
+                .isEqualTo(404);
     }
 
     @Test
-    void anIdThatIsNotAnIdIsNotFoundRatherThanAnError() {
-        // No ULID validation on the path: a malformed id matches no row, which is already the right
-        // answer. Rejecting it earlier would turn a 404 into a 400 telling the caller their id was
-        // *shaped* wrong — a distinction the API otherwise never makes.
-        assertThat(get("/v1/skills/not-a-ulid", token()).statusCode()).isEqualTo(404);
+    void anAddressThatResolvesToNothingIsNotFoundRatherThanAnError() {
+        // Nothing validates the shape of an address and rejects it with a 400. A name no skill has,
+        // and a version suffix that is not a version at all, are both §4.1's 404 — deliberately the
+        // same one a skill in someone else's namespace gets. A 400 would announce "your address is
+        // malformed", which is a distinction the API otherwise never makes.
+        insertSkill(DEMO_NAMESPACE_ID, DEMO_USER_ID, "pdf-tools");
+
+        assertThat(get("/v1/skills/demo/not-a-real-name", token()).statusCode()).isEqualTo(404);
+        assertThat(get("/v1/skills/demo/pdf-tools@not-a-version", token()).statusCode())
+                .isEqualTo(404);
+        assertThat(get("/v1/skills/demo/pdf-tools@0", token()).statusCode())
+                .as("version numbers start at 1, so @0 names nothing")
+                .isEqualTo(404);
     }
 
     // ---------------------------------------------------------------------------------------
@@ -162,11 +198,13 @@ class SkillDetailIT extends AbstractIT {
     // ---------------------------------------------------------------------------------------
 
     /**
-     * Inserts a skill with two files, one of them under {@code references/}.
+     * Inserts a skill with two files, one of them under {@code references/}, and one version.
      *
      * <p>Written out rather than published through the API so that a failure here cannot be a
      * failure of the publish path. Sizes and digests are the real ones: a fixture that lies about
      * them would hide a formatting bug in the response.
+     *
+     * @return the skill's id, for the assertions that are about rows rather than about HTTP
      */
     private String insertSkill(String namespaceId, String userId, String name) {
         String skillId = Ulid.generate();
@@ -188,9 +226,9 @@ class SkillDetailIT extends AbstractIT {
                 .update();
 
         jdbc.sql("""
-                INSERT INTO skill_version (id, skill_id, digest, file_count, total_bytes,
+                INSERT INTO skill_version (id, skill_id, number, digest, file_count, total_bytes,
                                            changelog, source, published_by, published_at)
-                VALUES (:id, :skill, :digest, 2, :total, '', 'zip', :user, :at)
+                VALUES (:id, :skill, 1, :digest, 2, :total, '', 'zip', :user, :at)
                 """)
                 .param("id", versionId).param("skill", skillId)
                 // A real digest of the name: 64 lowercase hex characters, as the read path expects

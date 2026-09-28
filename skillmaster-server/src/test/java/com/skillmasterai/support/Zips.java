@@ -72,6 +72,48 @@ public final class Zips {
     }
 
     /**
+     * Rewrites one entry's declared uncompressed size, in the central directory.
+     *
+     * <p>How a zip bomb lies: the header claims a few bytes and the deflate stream delivers many. No
+     * archive writer produces that — the declared size is computed on the way out — so it has to be
+     * patched in afterwards, the same reason {@link #patchedNames} exists. Only the central
+     * directory is touched, because that is the copy a random-access reader believes.
+     *
+     * <p>The directory is found by scanning for its signature and checking the name at each
+     * candidate, so a chance occurrence of those four bytes inside compressed data is skipped rather
+     * than trusted.
+     */
+    public static byte[] withDeclaredSize(byte[] zip, String entryName, int declaredSize) {
+        byte[] patched = zip.clone();
+        for (int at = 0; at + 46 <= patched.length; at++) {
+            if (patched[at] != 'P' || patched[at + 1] != 'K'
+                    || patched[at + 2] != 1 || patched[at + 3] != 2) {
+                continue;
+            }
+            int nameLength = readShort(patched, at + 28);
+            if (nameLength <= 0 || at + 46 + nameLength > patched.length) {
+                continue;
+            }
+            if (new String(patched, at + 46, nameLength, StandardCharsets.UTF_8).equals(entryName)) {
+                writeInt(patched, at + 24, declaredSize);
+                return patched;
+            }
+        }
+        throw new IllegalArgumentException("no central directory entry named " + entryName);
+    }
+
+    private static int readShort(byte[] bytes, int at) {
+        return (bytes[at] & 0xff) | ((bytes[at + 1] & 0xff) << 8);
+    }
+
+    private static void writeInt(byte[] bytes, int at, int value) {
+        bytes[at] = (byte) value;
+        bytes[at + 1] = (byte) (value >>> 8);
+        bytes[at + 2] = (byte) (value >>> 16);
+        bytes[at + 3] = (byte) (value >>> 24);
+    }
+
+    /**
      * A zip whose entry names are written as given, using {@code java.util.zip}.
      *
      * <p>Needed for the names commons-compress will not write at all: {@code ../evil.md} and

@@ -2,10 +2,13 @@ package com.skillmasterai.api;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.skillmasterai.common.CursorCodec;
 import com.skillmasterai.common.Ulid;
 import com.skillmasterai.support.AbstractIT;
 import java.net.http.HttpResponse;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.Base64;
 import java.util.List;
 import org.junit.jupiter.api.Test;
 import org.springframework.test.context.jdbc.Sql;
@@ -52,6 +55,22 @@ class SkillSearchIT extends AbstractIT {
     }
 
     @Test
+    void aCardIsL1FieldsAndTheVersionItPointsAtAndNothingElse() {
+        // §4.2's card, pinned field by field. The version is nested rather than flattened because its
+        // two halves answer different questions: the number is the short thing a client carries
+        // forward in an address, and the digest is the identity it can verify content against.
+        insertSkill(DEMO_NAMESPACE_ID, DEMO_USER_ID, "pdf-tools", "PDF 工具", "提取与合并 PDF");
+
+        JsonNode card = search("?q=pdf").get(0);
+
+        assertThat(card.propertyNames()).containsExactlyInAnyOrder("id", "name", "title",
+                "description", "namespace", "visibility", "version", "updated_at");
+        assertThat(card.get("version").propertyNames()).containsExactlyInAnyOrder("number", "digest");
+        assertThat(card.get("version").get("number").asInt()).isEqualTo(1);
+        assertThat(card.get("version").get("digest").asText()).matches("sha256:[0-9a-f]{64}");
+    }
+
+    @Test
     void aQueryThatMatchesNothingReturnsNothing() {
         insertSkill(DEMO_NAMESPACE_ID, DEMO_USER_ID, "pdf-tools", "PDF 工具", "提取与合并 PDF");
 
@@ -87,10 +106,18 @@ class SkillSearchIT extends AbstractIT {
         // `namespace` is documented as a filter within what the caller may see, never a bypass. The
         // way it could have been a bypass is if it *replaced* the ownership predicate instead of
         // refining it.
+        //
+        // A skill in the caller's own namespace is inserted as well, because "empty" on its own
+        // cannot tell the filter from a parameter that is silently ignored: with only the other
+        // user's skill present, every one of these assertions would hold just as well if
+        // `namespace` did nothing at all.
+        insertSkill(DEMO_NAMESPACE_ID, DEMO_USER_ID, "mine", "Mine", "shared keyword");
         insertSkill(OTHER_NAMESPACE_ID, OTHER_USER_ID, "theirs", "Theirs", "shared keyword");
 
         assertThat(search("?namespace=other")).isEmpty();
         assertThat(search("?namespace=other&q=keyword")).isEmpty();
+        assertThat(search("?namespace=demo")).hasSize(1);
+        assertThat(search("?namespace=demo").get(0).get("name").asText()).isEqualTo("mine");
     }
 
     @Test
@@ -215,6 +242,45 @@ class SkillSearchIT extends AbstractIT {
     }
 
     @Test
+    void aCursorWhoseKeyIsNotWhatItClaimsIsRejectedRatherThanFailingTheQuery() {
+        // A cursor is opaque but not signed, so a hand-edited one reaches the query — where the
+        // first key part is CAST(… AS integer). An uncastable value is a SQL error, and a SQL error
+        // on a request path is a 500 for what §4.1 calls a cursor nobody can read.
+        insertSkillsForPaging();
+        String issued = JSON.readTree(get("/v1/skills?q=widget&limit=1", token()).body())
+                .get("next_cursor").asText();
+        String ordering = JSON.readTree(new String(Base64.getUrlDecoder().decode(issued),
+                StandardCharsets.UTF_8)).get("o").asText();
+        String tampered = CursorCodec.encode(ordering,
+                List.of("abc", "2026-09-28T00:00:00Z", "01M3HTG7GCCVBGRPAFFSVSF12W"));
+
+        HttpResponse<String> response =
+                get("/v1/skills?q=widget&limit=1&cursor=" + tampered, token());
+
+        assertThat(response.statusCode()).as("body was: %s", response.body()).isEqualTo(400);
+        assertThat(response.body()).contains("invalid_request");
+
+        // The timestamp half of the same check, and the reason it is a round-trip rather than a
+        // parse: the keyset compares updated_at as *text*, so a parseable-but-different spelling of
+        // the same instant moves the page boundary without any error anywhere.
+        String offsetForm = CursorCodec.encode(ordering,
+                List.of("0", "2026-09-28T00:00:00+00:00", "01M3HTG7GCCVBGRPAFFSVSF12W"));
+
+        assertThat(get("/v1/skills?q=widget&limit=1&cursor=" + offsetForm, token()).statusCode())
+                .as("the same instant written differently is not the text this ordering compares")
+                .isEqualTo(400);
+
+        // The score half, with a value that is a number to Java and not to PostgreSQL:
+        // Integer.parseInt takes every Unicode decimal digit, the AS integer cast takes ASCII only.
+        String arabicIndic = CursorCodec.encode(ordering,
+                List.of("٣", "2026-09-28T00:00:00Z", "01M3HTG7GCCVBGRPAFFSVSF12W"));
+
+        assertThat(get("/v1/skills?q=widget&limit=1&cursor=" + arabicIndic, token()).statusCode())
+                .as("an Arabic-Indic three parses in Java and not in the cast the cursor feeds")
+                .isEqualTo(400);
+    }
+
+    @Test
     void aCursorFromADifferentOrderingIsRejected() {
         // The cursor carries scores computed under one ordering. Resuming it under another would
         // compare tiers that share no scale, producing a page of arbitrary rows with no error.
@@ -227,18 +293,38 @@ class SkillSearchIT extends AbstractIT {
         assertThat(get("/v1/skills?q=widget&limit=1&cursor=" + cursor, token()).statusCode())
                 .as("the same ordering it came from is accepted")
                 .isEqualTo(200);
+
+        // The ordering comparison runs first, so that `sort=recent` case is rejected by it — but
+        // delete the comparison and it is *still* rejected, by the width check (relevance carries
+        // three key parts, recency two). Which is why it never failed the mutation this test is
+        // named for. A retuned weighting has the same width and a different scale, so only the
+        // comparison can reject it, and that is the case it exists for.
+        String retuned = CursorCodec.encode("relevance:1,2,3",
+                List.of("0", "2026-09-28T00:00:00Z", "01M3HTG7GCCVBGRPAFFSVSF12W"));
+
+        assertThat(get("/v1/skills?q=widget&limit=1&cursor=" + retuned, token()).statusCode())
+                .as("same width, different weights: the identity carried in the cursor is the only "
+                        + "thing that can reject this")
+                .isEqualTo(400);
     }
 
     @Test
     void theLimitDefaultsToTwentyAndIsCappedAtOneHundred() {
-        for (int i = 0; i < 25; i++) {
+        // More rows than the ceiling, so the clamp is actually reached: a fixture below it makes
+        // every assertion here hold identically with no clamp at all, which is how this test used
+        // to pass while pinning nothing.
+        for (int i = 0; i < 105; i++) {
             insertSkill(DEMO_NAMESPACE_ID, DEMO_USER_ID, "skill-" + i, "x", "y");
         }
 
         assertThat(search("").size()).isEqualTo(20);
-        assertThat(search("?limit=100").size())
+        assertThat(search("?limit=100").size()).isEqualTo(100);
+        assertThat(search("?limit=101").size())
                 .as("a larger request is clamped to the documented ceiling")
-                .isEqualTo(25);
+                .isEqualTo(100);
+        assertThat(search("?limit=100000").size())
+                .as("and a much larger one is clamped too, not merely refused")
+                .isEqualTo(100);
         assertThat(get("/v1/skills?limit=0", token()).statusCode())
                 .as("zero rows is a mistake, not a smaller answer")
                 .isEqualTo(400);
@@ -301,9 +387,9 @@ class SkillSearchIT extends AbstractIT {
                 .update();
 
         jdbc.sql("""
-                INSERT INTO skill_version (id, skill_id, digest, file_count, total_bytes,
+                INSERT INTO skill_version (id, skill_id, number, digest, file_count, total_bytes,
                                            changelog, source, published_by, published_at)
-                VALUES (:id, :skill, :digest, 0, 0, '', 'zip', :user, :at)
+                VALUES (:id, :skill, 1, :digest, 0, 0, '', 'zip', :user, :at)
                 """)
                 .param("id", versionId).param("skill", skillId).param("digest", digest)
                 .param("user", userId).param("at", updatedAt)

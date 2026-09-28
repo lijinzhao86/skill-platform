@@ -3,8 +3,8 @@ package com.skillmasterai.usecase;
 import com.skillmasterai.modules.auth.AuthenticatedSubject;
 import com.skillmasterai.modules.distribution.SkillDetail;
 import com.skillmasterai.modules.distribution.SkillDistributionService;
-import com.skillmasterai.modules.namespace.Namespace;
 import com.skillmasterai.modules.namespace.NamespaceService;
+import com.skillmasterai.modules.version.VersionPin;
 import java.util.Optional;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
@@ -19,9 +19,9 @@ import org.springframework.transaction.annotation.Transactional;
  * those modules alone would be wrong — M4 cannot name the {@code skill} table, and M9 must not
  * decide policy — so the meeting point is here.
  *
- * <p>{@link #readableNamespaceOf} therefore runs on every call, including the ones that turn out
- * to be 404. That is the point: it is not an optimization to be skipped when the answer "looks
- * like" it will be empty.
+ * <p>{@link NamespaceService#readableNamespaceOf} therefore runs on every call, including the ones
+ * that turn out to be 404. That is the point: it is not an optimization to be skipped when the
+ * answer "looks like" it will be empty.
  *
  * <p>Read-only, so there is no transaction to draw — {@code @Transactional(readOnly = true)} is
  * declared anyway so that the three-query read sees one consistent snapshot rather than a version
@@ -40,32 +40,30 @@ public class ReadSkillUseCase {
 
     /** L1: the full manifest and no content. */
     @Transactional(readOnly = true)
-    public Optional<SkillDetail> detail(String skillId, AuthenticatedSubject subject) {
-        return distribution.detailOf(skillId, readableNamespaceOf(subject));
+    public Optional<SkillDetail> detail(String namespaceSlug, String name, VersionPin pin,
+            AuthenticatedSubject subject) {
+        return namespaces.readableNamespaceOf(subject.userId(), namespaceSlug)
+                .flatMap(namespace -> distribution.detailOf(namespace, name, pin));
     }
 
     /** L2: the original {@code SKILL.md} bytes. */
     @Transactional(readOnly = true)
-    public Optional<byte[]> body(String skillId, AuthenticatedSubject subject) {
-        return distribution.bodyOf(skillId, readableNamespaceOf(subject));
-    }
-
-    /** L3: one file's original bytes, by exact {@code relpath}. */
-    @Transactional(readOnly = true)
-    public Optional<SkillDistributionService.StoredFile> file(String skillId, String relpath,
+    public Optional<byte[]> body(String namespaceSlug, String name, VersionPin pin,
             AuthenticatedSubject subject) {
-        return distribution.fileOf(skillId, relpath, readableNamespaceOf(subject));
+        return namespaces.readableNamespaceOf(subject.userId(), namespaceSlug)
+                .flatMap(namespace -> distribution.bodyOf(namespace, name, pin));
     }
 
     /**
-     * The namespace this caller may read from.
+     * L3: one file's original bytes, by exact {@code relpath}.
      *
-     * <p>v1's answer is narrow and stated in one place: a caller reads from their own personal
-     * namespace and nowhere else. §3.2 and the PRD both defer sharing and public discovery, so
-     * when they arrive this is the method that changes — and the fact that it is a method, not a
-     * condition repeated at each endpoint, is what keeps that a one-line change rather than three.
+     * <p>The result keeps §4.1's two 404s apart — nothing at this address, versus a version that
+     * resolved and does not list the file. See {@link SkillDistributionService.FileLookup}.
      */
-    private Namespace readableNamespaceOf(AuthenticatedSubject subject) {
-        return namespaces.personalNamespaceOf(subject.userId());
+    @Transactional(readOnly = true)
+    public Optional<SkillDistributionService.FileLookup> file(String namespaceSlug, String name,
+            VersionPin pin, String relpath, AuthenticatedSubject subject) {
+        return namespaces.readableNamespaceOf(subject.userId(), namespaceSlug)
+                .flatMap(namespace -> distribution.fileOf(namespace, name, pin, relpath));
     }
 }

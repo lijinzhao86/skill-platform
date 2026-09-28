@@ -3,6 +3,7 @@ package com.skillmasterai.api;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.skillmasterai.support.AbstractIT;
+import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -30,5 +31,20 @@ class InsufficientScopeIT extends AbstractIT {
                 .contains("scope=\"skills:read\"")
                 .contains("resource_metadata=\"http://localhost:8080/.well-known/oauth-protected-resource\"");
         assertThat(response.body()).contains("\"code\":\"insufficient_scope\"");
+    }
+
+    @Test
+    void headIsDeniedAsAReadRatherThanServedAsAWrite() {
+        // Scopes.requiredForMethod maps HEAD and OPTIONS to the read scope, and the challenge below
+        // is what it prints. The authorization rule has to route them the same way: while it named
+        // GET alone, HEAD fell to the write rule — which this write-only token satisfies — so the
+        // request was served while a tool that inspected the challenge was told to acquire a scope
+        // it already had.
+        HttpResponse<String> response = send(request("/v1/skills", token())
+                .method("HEAD", HttpRequest.BodyPublishers.noBody())
+                .build());
+
+        assertThat(response.statusCode()).isEqualTo(403);
+        assertThat(wwwAuthenticate(response)).contains("scope=\"skills:read\"");
     }
 }
