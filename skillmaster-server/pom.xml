@@ -15,6 +15,9 @@
 	<description>API and authorization server for skillmaster</description>
 	<properties>
 		<java.version>25</java.version>
+		<!-- Not managed by spring-boot-dependencies, so both are pinned here. -->
+		<commons-compress.version>1.28.0</commons-compress.version>
+		<archunit.version>1.5.1</archunit.version>
 	</properties>
 	<dependencies>
 		<dependency>
@@ -24,6 +27,52 @@
 		<dependency>
 			<groupId>org.springframework.boot</groupId>
 			<artifactId>spring-boot-starter-webmvc</artifactId>
+		</dependency>
+		<dependency>
+			<groupId>org.springframework.boot</groupId>
+			<artifactId>spring-boot-starter-jdbc</artifactId>
+		</dependency>
+		<dependency>
+			<groupId>org.springframework.boot</groupId>
+			<artifactId>spring-boot-starter-security</artifactId>
+		</dependency>
+
+		<dependency>
+			<groupId>org.postgresql</groupId>
+			<artifactId>postgresql</artifactId>
+			<scope>runtime</scope>
+		</dependency>
+		<dependency>
+			<groupId>org.flywaydb</groupId>
+			<artifactId>flyway-core</artifactId>
+		</dependency>
+		<dependency>
+			<groupId>org.flywaydb</groupId>
+			<artifactId>flyway-database-postgresql</artifactId>
+			<scope>runtime</scope>
+		</dependency>
+		<!-- Boot 4 moved autoconfiguration out of spring-boot-autoconfigure into one artifact
+		     per technology, so without this the Flyway beans are never created and migrations
+		     silently never run — the migrations would exist and do nothing. -->
+		<dependency>
+			<groupId>org.springframework.boot</groupId>
+			<artifactId>spring-boot-flyway</artifactId>
+		</dependency>
+
+		<!-- Frontmatter is YAML and must be parsed strictly: a hand-written parser is
+		     what silently mangled nested metadata and block scalars in the archived
+		     baseline (see known-issues.md M5). Declared explicitly rather than borrowed
+		     transitively from Boot's config loading. -->
+		<dependency>
+			<groupId>org.yaml</groupId>
+			<artifactId>snakeyaml</artifactId>
+		</dependency>
+		<!-- Needed for zip entries' unix mode, which is the only way to tell a symlink
+		     entry from a regular file — java.util.zip does not expose it. -->
+		<dependency>
+			<groupId>org.apache.commons</groupId>
+			<artifactId>commons-compress</artifactId>
+			<version>${commons-compress.version}</version>
 		</dependency>
 
 		<dependency>
@@ -36,6 +85,12 @@
 			<artifactId>spring-boot-starter-webmvc-test</artifactId>
 			<scope>test</scope>
 		</dependency>
+		<dependency>
+			<groupId>com.tngtech.archunit</groupId>
+			<artifactId>archunit-junit5</artifactId>
+			<version>${archunit.version}</version>
+			<scope>test</scope>
+		</dependency>
 	</dependencies>
 
 	<build>
@@ -43,6 +98,44 @@
 			<plugin>
 				<groupId>org.springframework.boot</groupId>
 				<artifactId>spring-boot-maven-plugin</artifactId>
+			</plugin>
+			<!-- The gateway skill's source lives at the repository root, not in this subproject,
+			     because two subprojects need it: the server publishes it into the reserved
+			     namespace, and the CLI installs it locally. Copying it onto the classpath here
+			     rather than committing a second copy is the point — §2.3 of the docs conventions
+			     allows one authoritative location per fact, and a duplicated SKILL.md would drift
+			     from the one the CLI ships.
+
+			     From `../gateway` into `gateway/` in the output, so the resource path is
+			     `gateway/skillmaster/SKILL.md` — the same relative path it has in the repository,
+			     which is what keeps the substitution step honest about what it is reading. -->
+			<plugin>
+				<groupId>org.apache.maven.plugins</groupId>
+				<artifactId>maven-resources-plugin</artifactId>
+				<executions>
+					<execution>
+						<id>copy-gateway-skill</id>
+						<phase>process-resources</phase>
+						<goals>
+							<goal>copy-resources</goal>
+						</goals>
+						<configuration>
+							<outputDirectory>${project.build.outputDirectory}/gateway</outputDirectory>
+							<resources>
+								<resource>
+									<directory>${project.basedir}/../gateway</directory>
+								</resource>
+							</resources>
+						</configuration>
+					</execution>
+				</executions>
+			</plugin>
+			<!-- Integration tests (*IT) hit a real PostgreSQL, so they run at `verify`,
+			     after surefire's pure unit tests. The parent already binds the
+			     integration-test and verify goals, so declaring the plugin is enough. -->
+			<plugin>
+				<groupId>org.apache.maven.plugins</groupId>
+				<artifactId>maven-failsafe-plugin</artifactId>
 			</plugin>
 		</plugins>
 	</build>

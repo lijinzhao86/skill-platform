@@ -20,8 +20,9 @@ disturbing the others.
   [ADR 0010](docs/decisions/0010-storage-in-postgres.md)). Self-contained: Maven
   (`pom.xml`, with `mvnw` committed so every machine resolves the same Maven version),
   `Dockerfile`, `src/test/`. Its CI is `.github/workflows/server.yml` at the repository
-  root — workflows can only live there. **The framework stands up; nothing is built on
-  it yet** — the only endpoint it serves is a health check. `reference-python/` holds the
+  root — workflows can only live there. **P0a is implemented**: publishing a skill, the
+  four read endpoints, search, and the gateway's discovery channel, over PostgreSQL.
+  Authentication is a single static token until P1. `reference-python/` holds the
   pre-Java baseline as a design reference, outside the build
   ([technical design](docs/versions/v1-hosting/technical-design.md) §6).
 - `skillmaster-cli/` — the client that holds credentials and fetches skills on
@@ -40,14 +41,19 @@ disturbing the others.
 
 ## Quick start
 
-The server is a framework-only skeleton: it builds, it starts, and the one thing it
-serves is a health check. Nothing is implemented on top of it yet.
+The server implements P0a: publish a skill, search it, read its manifest, its body and its
+files, and serve the anonymous discovery channel. It needs a PostgreSQL database and a token
+(the authorization server is P1, so there is no login yet).
 
 ```bash
 cd skillmaster-server
+scripts/init-test-db.sh  # creates the test database, once
 ./mvnw verify            # build and run the tests
 ./mvnw spring-boot:run   # then: curl localhost:8080/actuator/health
 ```
+
+A walk-through of the whole loop, with the commands to run by hand, is in
+[`skillmaster-server/README.md`](skillmaster-server/README.md).
 
 Requires **JDK 25**. `mvnw` downloads its own Maven, so Maven itself needs no install.
 Local setup beyond that is in

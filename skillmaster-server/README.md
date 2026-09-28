@@ -5,8 +5,9 @@ server, and blob storage ([technical design](../../docs/versions/v1-hosting/tech
 §2.2). **Java 25 (LTS) + Spring Boot 4 / Spring Security 7**
 ([ADR 0011](../../docs/decisions/0011-server-and-cli-stack.md)).
 
-**Framework only.** It builds and starts, and the sole endpoint is `/actuator/health`.
-None of the API, the AS, or storage is implemented yet — the phasing is in
+**P0a is implemented**: publishing a skill, the four read endpoints, search, and the gateway's
+discovery channel, over PostgreSQL. The authorization server, login and registration are P1, so
+today the API authenticates with a single static token. The phasing is in
 [`technical-design.md`](../../docs/versions/v1-hosting/technical-design.md) §7.
 
 ## Toolchain
@@ -31,6 +32,54 @@ point `JAVA_HOME` at 25 explicitly:
 ```bash
 export JAVA_HOME=$(brew --prefix openjdk@25)   # Homebrew, macOS
 ```
+
+## Walking the whole loop by hand
+
+The sequence below is the same one [`ServerSmokeIT`](src/test/java/com/skillmasterai/api/ServerSmokeIT.java)
+asserts, so if it works there it should work here. It needs a database the migrations can run
+against, and a token:
+
+```bash
+createdb skillmaster                                        # once
+export SKILLMASTER_AUTH_STATIC_TOKEN=$(openssl rand -hex 24)   # no default: see application.yml
+./mvnw spring-boot:run
+```
+
+Then, in another shell, publish a skill and read it back at each level. `TOKEN` is the value
+above, and the archive's directory must be named after the skill (§1.3):
+
+```bash
+TOKEN=...                                                   # same value as the export above
+API=http://localhost:8080/v1
+
+mkdir -p /tmp/demo/feishu-tasks/references
+printf -- '---\nname: feishu-tasks\ndescription: 飞书任务\n---\n# 飞书任务\n\n读 `references/fields.md`。\n' \
+  > /tmp/demo/feishu-tasks/SKILL.md
+printf '# 字段\n' > /tmp/demo/feishu-tasks/references/fields.md
+(cd /tmp/demo && zip -qr /tmp/feishu-tasks.zip feishu-tasks)
+
+# publish — 201 the first time, 200 with created:false if the content is unchanged
+curl -sS -X POST "$API/skills" -H "Authorization: Bearer $TOKEN" \
+  -F file=@/tmp/feishu-tasks.zip
+ID=...                                                      # the id from that response
+
+# L1 — search, then the full manifest and no content
+curl -sS "$API/skills?q=飞书" -H "Authorization: Bearer $TOKEN"
+curl -sS "$API/skills/$ID" -H "Authorization: Bearer $TOKEN"
+
+# L2 and L3 — the bytes themselves
+curl -sS "$API/skills/$ID/body" -H "Authorization: Bearer $TOKEN"
+curl -sS "$API/skills/$ID/files/references/fields.md" -H "Authorization: Bearer $TOKEN"
+
+# the anonymous discovery channel — no token, and a real 404 until the gateway is published
+curl -sS "http://localhost:8080/.well-known/agent-skills/index.json"
+curl -sS "http://localhost:8080/.well-known/skills/index.json"
+curl -sS "http://localhost:8080/gateway/SKILL.md"
+```
+
+The last three have no `Authorization` header on purpose: that channel is how a machine that has
+never logged in learns where to log in, so requiring a token would make it unreachable by the only
+clients that need it (§1.5).
 
 ## Dockerfile
 

@@ -1,7 +1,7 @@
 # v1-hosting · skill 托管与远程加载
 
-> **最后更新**：2026-09-27
-> **状态**：进行中（设计已定稿，**尚未实现**）
+> **最后更新**：2026-09-28
+> **状态**：进行中。设计已定稿；**服务端 P0a 已实现**（按旧寻址，见下）。CLI 与网关安装属 **P0b**；**[ADR 0012](../../decisions/0012-addressing-and-version-pinning.md) 的寻址改成 `namespace/name[@版本]` 属 P0c，尚未实现**——所以现在文档与代码在寻址上不一致，记账处见 [`technical-design.md`](technical-design.md) §7 与 [`test-plan.md`](test-plan.md) §已知问题。
 > **含收费**：否
 
 <!--

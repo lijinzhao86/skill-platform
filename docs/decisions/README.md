@@ -15,7 +15,7 @@
 | [0001](0001-server-authoritative.md) | 服务端权威，本地不落 skill 副本 | 已采纳 | 2026-09-26 |
 | [0002](0002-gateway-skill-and-cli.md) | 交付形态：一个通用网关 skill + 自研 CLI | 已采纳 | 2026-09-26 |
 | [0003](0003-api-primary.md) | API 为主契约，MCP 为可选适配器 | 已采纳 | 2026-09-26 |
-| [0004](0004-opaque-id-primary-key.md) | 身份模型：不透明 `id` 作主键，`name` 为属性 | 已采纳 | 2026-09-26 |
+| [0004](0004-opaque-id-primary-key.md) | 身份模型：不透明 `id` 作主键，`name` 为属性 | 已采纳（寻址部分被 0012 修订） | 2026-09-26 |
 | [0005](0005-content-addressing.md) | 内容寻址与幂等发布 | 已采纳 | 2026-09-26 |
 | [0006](0006-search-server-side.md) | 检索在服务端，且只索引 L1 | 已采纳 | 2026-09-26 |
 | [0007](0007-self-built-oauth-as.md) | 自建 OAuth 2.1 AS，支持三种客户端注册方式 | 已采纳 | 2026-09-26 |
@@ -23,6 +23,7 @@
 | [0009](0009-drop-l2n.md) | 砍掉 `l2#n`，付费边界只落在层与层之间 | 已采纳 | 2026-09-26 |
 | [0010](0010-storage-in-postgres.md) | 存储全部落在 PostgreSQL（含字节），不引对象存储或文件系统 | 已采纳 | 2026-09-27 |
 | [0011](0011-server-and-cli-stack.md) | 技术栈：服务端 Java + Spring，CLI 用 Go；v1 的 AS 只做预注册 | 已采纳 | 2026-09-27 |
+| [0012](0012-addressing-and-version-pinning.md) | 寻址：`namespace/name` + 版本钉（`@序号` / `@digest`） | 已采纳 | 2026-09-28 |
 
 ## 状态取值
 
